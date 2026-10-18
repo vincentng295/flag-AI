@@ -11,7 +11,7 @@ Cướp Cờ Đáp Án AI - máy chủ game chiến thuật 1v1 .. 5v5 (Flask + 
 
 Cấu hình: copy flag.env.example thành flag.env (cạnh file này). Chạy: python flag_server.py
 """
-import io, os, re, sys, json, math, time, random, shutil, socket, hashlib, hmac, platform, tarfile
+import io, os, re, sys, ssl, json, math, time, random, shutil, socket, hashlib, hmac, platform, tarfile
 import threading, subprocess, urllib.request
 from flask import Flask, send_from_directory, abort, request
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -48,6 +48,13 @@ def env_bool(k, d=False):
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = env_num("PORT", 8889)
+# HTTPS trực tiếp (không qua Cloudflare Tunnel): chỉ bật khi có HTTPS_CERT hợp lệ
+TLS_HOST = os.getenv("TLS_HOST", "0.0.0.0").strip() or "0.0.0.0"
+TLS_PORT = env_num("TLS_PORT", 443)
+HTTPS_CERT = os.getenv("HTTPS_CERT", "").strip()
+HTTPS_KEY = os.getenv("HTTPS_KEY", "").strip()
+TLS_REFRESH_H = env_num("TLS_REFRESH_HOURS", 12.0)  # tự tải lại chứng chỉ (hữu ích khi cert gia hạn)
+TLS_DIR = os.path.join(BASE, ".tls")
 QFILE = os.getenv("QUESTION_FILE", os.path.join(BASE, "question.json"))
 ORIGINS_RAW = os.getenv("ALLOWED_ORIGINS", "*").strip()
 ORIGINS = "*" if ORIGINS_RAW in ("", "*") else [o.strip().rstrip("/") for o in ORIGINS_RAW.split(",") if o.strip()]
@@ -990,6 +997,109 @@ def lan_ip():
         return None
 
 
+# ---------- HTTPS trực tiếp ----------
+def _parse_src(v):
+    """'url;<link>' | 'file;<đường dẫn>' | 'none'/trống -> (loại, giá trị) hoặc None."""
+    v = (v or "").strip()
+    if not v or v.lower() == "none":
+        return None
+    kind, _, val = v.partition(";")
+    kind, val = kind.strip().lower(), val.strip()
+    if kind in ("url", "file") and val:
+        return kind, val
+    print(f"[!] Giá trị '{v}' không hợp lệ. Dùng: url;<link> | file;<đường dẫn> | none")
+    return None
+
+
+def _sibling_key(cert_src):
+    """HTTPS_KEY trống + HTTPS_CERT kết thúc bằng fullchain.pem -> lấy privkey.pem cùng thư mục."""
+    kind, val = cert_src
+    if val.lower().endswith("fullchain.pem"):
+        return kind, val[:-len("fullchain.pem")] + "privkey.pem"
+    return None
+
+
+def _fetch_pem(src):
+    kind, val = src
+    if kind == "file":
+        path = val if os.path.isabs(val) else os.path.join(BASE, val)
+        with open(path, "rb") as f:
+            return f.read()
+    req = urllib.request.Request(val, headers={"User-Agent": "flag-server"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.read()
+
+
+def _write_bin(path, data, mode):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+
+
+def _sync_tls(ctx, cert_src, key_src, first=False):
+    """Tải/đọc cert + key, kiểm tra hợp lệ rồi nạp vào ctx. Trả True nếu có thay đổi."""
+    cb, kb = _fetch_pem(cert_src), _fetch_pem(key_src)
+    os.makedirs(TLS_DIR, exist_ok=True)
+    cp, kp = os.path.join(TLS_DIR, "fullchain.pem"), os.path.join(TLS_DIR, "privkey.pem")
+    try:
+        with open(cp, "rb") as f1, open(kp, "rb") as f2:
+            old = (f1.read(), f2.read())
+    except OSError:
+        old = None
+    if not first and old == (cb, kb):
+        return False
+    cn, kn = cp + ".new", kp + ".new"
+    _write_bin(cn, cb, 0o644); _write_bin(kn, kb, 0o600)
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cn, kn)  # cert/key sai hoặc không khớp -> lỗi tại đây
+    except Exception:
+        for p in (cn, kn):
+            try: os.remove(p)
+            except OSError: pass
+        raise
+    os.replace(cn, cp); os.replace(kn, kp)
+    ctx.load_cert_chain(cp, kp)
+    return True
+
+
+def _tls_refresher(ctx, cert_src, key_src):
+    while True:
+        time.sleep(max(0.1, TLS_REFRESH_H) * 3600)
+        try:
+            if _sync_tls(ctx, cert_src, key_src):
+                print("[*] Đã nạp lại chứng chỉ HTTPS mới.")
+        except Exception as e:
+            print(f"[!] Không làm mới được chứng chỉ HTTPS (giữ cert cũ): {e}")
+
+
+def start_https():
+    cert_src = _parse_src(HTTPS_CERT)
+    if not cert_src:
+        print("[*] HTTPS_CERT trống/none - không bật HTTPS trực tiếp.")
+        return
+    key_src = _parse_src(HTTPS_KEY) or _sibling_key(cert_src)
+    if not key_src:
+        print("[!] Thiếu HTTPS_KEY (và HTTPS_CERT không kết thúc bằng fullchain.pem để tự suy ra privkey.pem) - không bật HTTPS.")
+        return
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    try:
+        _sync_tls(ctx, cert_src, key_src, first=True)
+    except Exception as e:
+        print(f"[!] Không nạp được chứng chỉ HTTPS: {e}")
+        return
+    from werkzeug.serving import make_server
+    try:
+        srv = make_server(TLS_HOST, TLS_PORT, app, threaded=True, ssl_context=ctx, request_handler=NoDelayHandler)
+    except OSError as e:
+        print(f"[!] Không mở được HTTPS tại {TLS_HOST}:{TLS_PORT}: {e} (cổng < 1024 trên Linux/macOS cần quyền root, hoặc cổng đang bị chiếm)")
+        return
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    if cert_src[0] == "url" or key_src[0] == "url" or TLS_REFRESH_H > 0:
+        threading.Thread(target=_tls_refresher, args=(ctx, cert_src, key_src), daemon=True).start()
+    print(f"[*] HTTPS đang chạy tại {TLS_HOST}:{TLS_PORT} (chỉ truy cập được bằng đúng tên miền của chứng chỉ, không phải IP).")
+
+
 # ---------- phục vụ web ----------
 @app.route("/")
 def index():
@@ -1011,6 +1121,7 @@ if __name__ == "__main__":
         print(f"[*] Máy khác cùng Wi-Fi/LAN mở: http://{lan_ip()}:{PORT}/")
     elif HOST not in ("0.0.0.0", "::"):
         print("[*] (Muốn máy khác trong LAN vào được: đặt HOST=0.0.0.0 trong flag.env)")
+    start_https()
     if TUNNEL_ENABLED:
         threading.Thread(target=start_tunnel_and_watchdog, daemon=True).start()
     else:
