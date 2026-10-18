@@ -1,0 +1,1024 @@
+# -*- coding: utf-8 -*-
+"""
+Cướp Cờ Đáp Án AI - máy chủ game chiến thuật 1v1 .. 5v5 (Flask + Flask-SocketIO).
+
+- Server là trọng tài: di chuyển, đạn, hạ gục, cờ, cắm cờ, chấm điểm đều do server quyết định.
+- Bản đồ rộng kiểu MOBA: căn cứ 2 góc, 3 đường, sông chéo (đi chậm), rừng và bụi cỏ (núp, địch không thấy).
+- Mỗi round 3 phút (10s đọc đề + 170s tranh cờ). Hết giờ mới chấm: cờ nằm ở căn cứ đội nào
+  thì đội đó +100 nếu đúng, -50 nếu sai. Trong lúc chơi KHÔNG ai biết cờ nào đúng.
+- Chủ phòng có thể tạm dừng cả trận. Có Cloudflare Tunnel (cloudflared) giống snake-AI.
+- question.json KHÔNG được phục vụ ra web để học sinh không xem được đáp án.
+
+Cấu hình: copy flag.env.example thành flag.env (cạnh file này). Chạy: python flag_server.py
+"""
+import io, os, re, sys, json, math, time, random, shutil, socket, hashlib, hmac, platform, tarfile
+import threading, subprocess, urllib.request
+from flask import Flask, send_from_directory, abort, request
+from flask_socketio import SocketIO, emit, join_room, leave_room
+from werkzeug.serving import WSGIRequestHandler
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+
+
+def load_env():
+    path = os.path.join(BASE, os.getenv("ENV_FILE", ".env"))
+    if not os.path.isfile(path):
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip().strip("\"'"))
+
+
+load_env()
+
+
+def env_num(k, d):
+    try:
+        return type(d)(os.getenv(k, str(d)).strip())
+    except ValueError:
+        return d
+
+
+def env_bool(k, d=False):
+    return os.getenv(k, str(d)).strip().lower() in ("1", "true", "yes")
+
+
+HOST = os.getenv("HOST", "0.0.0.0")
+PORT = env_num("PORT", 8889)
+QFILE = os.getenv("QUESTION_FILE", os.path.join(BASE, "question.json"))
+ORIGINS_RAW = os.getenv("ALLOWED_ORIGINS", "*").strip()
+ORIGINS = "*" if ORIGINS_RAW in ("", "*") else [o.strip().rstrip("/") for o in ORIGINS_RAW.split(",") if o.strip()]
+ALLOWED_HOSTS = [h.strip().lower() for h in os.getenv("ALLOWED_HOSTS", "*").split(",") if h.strip()]
+ALLOW_ANY_HOST = not ALLOWED_HOSTS or "*" in ALLOWED_HOSTS
+TUNNEL_ENABLED = env_bool("TUNNEL", False)
+TUNNEL_HOST = os.getenv("TUNNEL_HOST", "").strip()
+TUNNEL_TOKEN = os.getenv("TUNNEL_TOKEN", "").strip()
+
+READ_S, PLAY_S, RESULT_S = env_num("READ_SECONDS", 10), env_num("PLAY_SECONDS", 170), env_num("RESULT_SECONDS", 12)
+HP, DOWN_S = env_num("HP", 3), env_num("DOWN_SECONDS", 5.0)
+PTS_OK, PTS_BAD = env_num("POINTS_CORRECT", 100), env_num("POINTS_WRONG", -50)
+PTS_KILL = env_num("POINTS_KILL", 20)  # điểm đội khi hạ một đối thủ
+MAXLV = 5
+MAX_SPECS = env_num("MAX_SPECTATORS", 30)
+T = 32; TW, TH = 80, 56; W, H = TW * T, TH * T     # bản đồ 80x56 ô
+PR = 14; HZ = 20; DT = 1.0 / HZ
+SPEED, CARRY_K, RIVER_K = 200.0, 0.7, 0.75
+BSPEED, BLIFE, COOL = 600.0, 0.9, 0.32
+SWORD_R, SWORD_COOL, SWORD_T = 58.0, 0.55, 0.25  # tầm / hồi chiêu / thời gian vung kiếm
+PLANT_S, STEAL_S, SEE_R = 2.0, 2.5, 170.0
+
+# ---------- bản đồ: đối xứng tâm (xoay 180 độ) ----------
+def sym(r):
+    x, y, w, h = r
+    return (TW - x - w, TH - y - h, w, h)
+
+
+def px(rs):
+    return [(x * T, y * T, w * T, h * T) for x, y, w, h in rs]
+
+
+_WA = [(10, 26, 3, 3), (16, 22, 3, 3), (13, 33, 3, 3), (21, 29, 3, 3), (22, 34, 2, 2), (9, 36, 2, 2),
+       (28, 42, 3, 3), (36, 45, 3, 2), (44, 40, 3, 3), (50, 45, 3, 2), (34, 39, 2, 2), (56, 42, 3, 3), (64, 46, 2, 2),
+       (8, 41, 4, 1), (12, 44, 1, 3), (12, 52, 1, 3)]
+_BA = [(3, 30, 3, 3), (9, 18, 3, 3), (25, 36, 3, 2), (18, 44, 4, 2), (40, 49, 4, 2), (30, 31, 3, 2), (52, 38, 3, 3), (66, 50, 4, 2)]
+WALLS = px(_WA + [sym(r) for r in _WA])
+BUSHES = px(_BA + [sym(r) for r in _BA])
+BASES = [(7 * T, 49 * T), (73 * T, 7 * T)]
+BASE_R = 4 * T
+LANES = [[(7, 49), (4, 42), (4, 5), (40, 4), (73, 7)], [(73, 7), (76, 14), (76, 51), (40, 52), (7, 49)],
+         [(7, 49), (40, 28), (73, 7)]]
+LANES = [[(x * T, y * T) for x, y in l] for l in LANES]
+RIVER_K0, RIVER_HALF = 0.7, 3 * T
+FLAG_SETS = {2: [(33, 35), (47, 21)], 3: [(33, 35), (47, 21), (40, 28)], 4: [(33, 35), (47, 21), (24, 24), (56, 32)]}
+MAPINFO = {"W": W, "H": H, "walls": WALLS, "bushes": BUSHES, "bases": BASES, "baseR": BASE_R, "lanes": LANES,
+           "river": {"k": RIVER_K0, "half": RIVER_HALF}}
+
+app = Flask(__name__)
+sio = SocketIO(app, async_mode="threading", cors_allowed_origins=ORIGINS)
+LOCK = threading.RLock()
+ROOMS, SID_ROOM = {}, {}
+
+
+def _strip_port(h):
+    h = h.strip().lower()
+    return h.rsplit(":", 1)[0] if h.count(":") == 1 else h
+
+
+def host_allowed(host):
+    if ALLOW_ANY_HOST:
+        return True
+    h = _strip_port(host).rstrip(".")
+    for pat in ALLOWED_HOSTS:
+        pat = _strip_port(pat).rstrip(".")
+        if pat == h or (pat.startswith("*.") and h.endswith(pat[1:]) and len(h) > len(pat) - 1):
+            return True
+    return False
+
+
+class HostGuard:
+    def __init__(self, wsgi):
+        self.wsgi = wsgi
+
+    def __call__(self, environ, start_response):
+        if not host_allowed(environ.get("HTTP_HOST", "")):
+            body = b"Host not allowed"
+            start_response("421 Misdirected Request", [("Content-Type", "text/plain"), ("Content-Length", str(len(body)))])
+            return [body]
+        return self.wsgi(environ, start_response)
+
+
+if not ALLOW_ANY_HOST:
+    app.wsgi_app = HostGuard(app.wsgi_app)
+
+
+# ---------- câu hỏi ----------
+FALLBACK = [
+    {"question": "AI là viết tắt của cụm từ nào?", "correct": "Artificial Intelligence (Trí tuệ nhân tạo)",
+     "wrong": ["Automatic Internet (Mạng tự động)", "Awesome Idea (Ý tưởng tuyệt vời)", "Animal Index (Chỉ số động vật)"],
+     "explanation": "AI là Artificial Intelligence: trí tuệ nhân tạo."},
+    {"question": "AI có thể trả lời sai không?", "correct": "Có, AI đôi khi trả lời sai",
+     "wrong": ["Không, AI luôn đúng 100%", "Không, AI không bao giờ sai"],
+     "explanation": "Hãy kiểm tra lại thông tin quan trọng."},
+]
+_QS, _DECK = [], []
+
+
+def _s(v):
+    return str(v).strip() if isinstance(v, (str, int, float)) and not isinstance(v, bool) else ""
+
+
+def load_questions():
+    global _QS, _DECK
+    items = []
+    try:
+        with open(QFILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for it in (data if isinstance(data, list) else data.get("questions", [])):
+            q = _s(it.get("question", it.get("q"))); c = _s(it.get("correct", it.get("answer")))
+            w = it.get("wrong", it.get("wrongs", it.get("incorrect", [])))
+            w = [x for x in (_s(v) for v in (w if isinstance(w, list) else [w])) if x]
+            if q and c and w:
+                items.append({"question": q, "correct": c, "wrong": w, "explanation": _s(it.get("explanation", it.get("explain")))})
+    except Exception as e:
+        print("[!] Không đọc được question.json:", e)
+    _QS, _DECK = items or FALLBACK, []
+    print(f"[*] {len(_QS)} câu hỏi")
+
+
+def next_question():
+    global _DECK
+    if not _DECK:
+        _DECK = list(range(len(_QS))); random.shuffle(_DECK)
+    q = _QS[_DECK.pop()]
+    opts = [(q["correct"], True)] + [(t, False) for t in random.sample(q["wrong"], min(3, len(q["wrong"])))]
+    random.shuffle(opts)
+    return {"question": q["question"], "options": [o[0] for o in opts],
+            "ok": [o[1] for o in opts].index(True), "explanation": q["explanation"]}
+
+
+# ---------- mô hình ----------
+class P:
+    def __init__(s, sid, nick, pid):
+        s.sid, s.nick, s.pid, s.team = sid, nick, pid, 0
+        s.nopick = 0.0  # sau khi thả cờ, chưa nhặt lại được ngay
+        s.ep = 0; s.tpos = 0.0  # ep: số lần máy chủ ép vị trí; tpos: lúc nhận vị trí client gần nhất
+        s.g = 0; s.w = 0  # g: 0 nam/1 nữ; w: 0 súng bóng nước/1 kiếm nhựa
+        s.reset()
+
+    def reset(s):
+        s.x = s.y = 0.0; s.a = 0.0; s.hp = HP; s.down = 0.0; s.cool = 0.0
+        s.lv = 1; s.exp = 0; s.mhp = HP
+        s.sw = 0.0; s.dx = s.dy = 0.0; s.fire = False; s.carry = -1; s.prog = 0.0; s.pf = -1
+
+
+class Room:
+    def __init__(s, code, name, pw, size, rounds, host):
+        s.code, s.name, s.pw, s.size, s.rounds, s.host = code, name, pw, size, rounds, host
+        s.players = {}; s.specs = {}; s.nextpid = 1; s.state = "lobby"; s.phase = "lobby"
+        s.flags = []; s.bullets = []; s.q = None; s.round = 0; s.tl = 0.0; s.ev = []
+        s.total = [0, 0]; s.dead = False; s.abort = False; s.paused = False
+
+
+def clean(v, n):
+    return "".join(ch for ch in str(v or "") if ch.isprintable()).strip()[:n]
+
+
+def num(v, lo, hi, df):
+    try:
+        return max(lo, min(hi, int(v)))
+    except (TypeError, ValueError):
+        return df
+
+
+def hpw(pw):
+    return hashlib.sha256(pw.encode()).hexdigest() if pw else ""
+
+
+def info(r):
+    return {"code": r.code, "name": r.name, "size": r.size, "rounds": r.rounds, "pw": bool(r.pw), "state": r.state,
+            "n": len(r.players), "ns": len(r.specs),
+            "host": (r.players.get(r.host) or r.specs.get(r.host) or P(0, "", 0)).pid,
+            "teams": [[{"pid": p.pid, "nick": p.nick} for p in r.players.values() if p.team == t] for t in (0, 1)],
+            "specs": [{"pid": p.pid, "nick": p.nick} for p in r.specs.values()]}
+
+
+def rooms_list():
+    return [{k: v for k, v in info(r).items() if k not in ("teams", "specs")} for r in ROOMS.values()]
+
+
+def push(r):
+    sio.emit("room", info(r), to=r.code)
+    sio.emit("rooms", rooms_list())
+
+
+def add_player(r, sid, nick, spec=False):
+    p = P(sid, nick, r.nextpid); r.nextpid += 1
+    if spec:
+        p.team = -1; r.specs[sid] = p
+    else:
+        c = [sum(1 for q in r.players.values() if q.team == t) for t in (0, 1)]
+        p.team = 0 if c[0] <= c[1] else 1
+        r.players[sid] = p
+    SID_ROOM[sid] = r
+    join_room(r.code, sid=sid)
+    return p
+
+
+def drop(sid):
+    r = SID_ROOM.pop(sid, None)
+    if not r:
+        return
+    p = r.players.pop(sid, None)
+    r.specs.pop(sid, None)
+    try:
+        leave_room(r.code, sid=sid)
+    except Exception:
+        pass
+    if p and 0 <= p.carry < len(r.flags):
+        f = r.flags[p.carry]; f["c"] = None; f["x"], f["y"] = p.x, p.y
+    if not r.players and not r.specs:
+        r.dead = True; ROOMS.pop(r.code, None)
+    else:
+        if r.host == sid:
+            r.host = next(iter(r.players or r.specs)); r.paused = False
+        if r.state == "playing" and (not any(q.team == 0 for q in r.players.values()) or not any(q.team == 1 for q in r.players.values())):
+            r.abort = True
+        push(r)
+    sio.emit("rooms", rooms_list())
+
+
+# ---------- sự kiện lobby ----------
+@sio.on("connect")
+def _connect():
+    emit("rooms", rooms_list())
+
+
+@sio.on("disconnect")
+def _disc():
+    with LOCK:
+        drop(request.sid)
+
+
+@sio.on("create")
+def on_create(d):
+    d = d or {}; sid = request.sid
+    nick = clean(d.get("nick"), 14) or "Người chơi"
+    name = clean(d.get("name"), 24) or "Phòng của " + nick
+    with LOCK:
+        drop(sid)
+        code = str(random.randint(1000, 9999))
+        while code in ROOMS:
+            code = str(random.randint(1000, 9999))
+        r = Room(code, name, hpw(clean(d.get("pw"), 20)), num(d.get("size"), 1, 5, 3), num(d.get("rounds"), 1, 5, 3), sid)
+        ROOMS[code] = r
+        p = add_player(r, sid, nick)
+        emit("me", {"pid": p.pid}); push(r)
+
+
+@sio.on("join")
+def on_join(d):
+    d = d or {}; sid = request.sid
+    nick = clean(d.get("nick"), 14) or "Người chơi"
+    with LOCK:
+        r = ROOMS.get(str(d.get("code")))
+        if not r:
+            return emit("err", "Phòng không còn tồn tại.")
+        if r.pw and not hmac.compare_digest(r.pw, hpw(clean(d.get("pw"), 20))):
+            return emit("err", "Sai mật khẩu phòng.")
+        if len(r.specs) >= MAX_SPECS and (r.state != "lobby" or len(r.players) >= r.size * 2):
+            return emit("err", "Ghế khán giả đã đầy.")
+        drop(sid)
+        # phòng đang chơi hoặc đã đủ người: vào ghế khán giả
+        spec = r.state != "lobby" or len(r.players) >= r.size * 2
+        p = add_player(r, sid, nick, spec)
+        emit("me", {"pid": p.pid}); push(r)
+        if r.state == "playing" and r.q:
+            emit("rd", {"i": r.round, "n": r.rounds, "q": {"question": r.q["question"], "options": r.q["options"]},
+                        "players": roster(r), "map": MAPINFO})
+
+
+@sio.on("leave")
+def on_leave():
+    with LOCK:
+        drop(request.sid)
+    emit("left")
+
+
+@sio.on("seat")
+def on_seat(d):
+    """Đổi chỗ ngồi trong phòng chờ: 0/1 = đội, 2 = ghế khán giả."""
+    sid = request.sid
+    with LOCK:
+        r = SID_ROOM.get(sid)
+        if not r or r.state != "lobby":
+            return
+        t = num(d, 0, 2, -1) if not isinstance(d, dict) else num(d.get("t"), 0, 2, -1)
+        if t < 0:
+            return
+        p = r.players.get(sid) or r.specs.get(sid)
+        if not p:
+            return
+        cur = 2 if sid in r.specs else p.team
+        if t == cur:
+            return
+        if t == 2:
+            if len(r.specs) >= MAX_SPECS:
+                return emit("err", "Ghế khán giả đã đầy.")
+            r.players.pop(sid, None); p.team = -1; r.specs[sid] = p
+        else:
+            if sum(1 for q in r.players.values() if q.team == t) >= r.size:
+                return emit("err", "Đội này đã đủ người.")
+            r.specs.pop(sid, None); p.team = t; r.players[sid] = p
+        push(r)
+
+
+@sio.on("team")
+def on_team():
+    with LOCK:
+        r = SID_ROOM.get(request.sid)
+        if not r or r.state != "lobby":
+            return
+        p = r.players.get(request.sid)
+        if not p:
+            return
+        t = 1 - p.team
+        if sum(1 for q in r.players.values() if q.team == t) >= r.size:
+            return emit("err", "Đội kia đã đủ người.")
+        p.team = t; push(r)
+
+
+@sio.on("start")
+def on_start():
+    with LOCK:
+        r = SID_ROOM.get(request.sid)
+        if not r or r.host != request.sid or r.state != "lobby":
+            return
+        if not any(p.team == 0 for p in r.players.values()) or not any(p.team == 1 for p in r.players.values()):
+            return emit("err", "Mỗi đội cần ít nhất 1 người.")
+        r.state = "playing"; r.abort = False; r.paused = False
+        sio.start_background_task(run_match, r)
+        push(r)
+
+
+@sio.on("pause")
+def on_pause():
+    with LOCK:
+        r = SID_ROOM.get(request.sid)
+        if r and r.host == request.sid and r.state == "playing" and r.phase in ("read", "play"):
+            r.paused = not r.paused
+
+
+@sio.on("drop")
+def on_drop():
+    with LOCK:
+        r = SID_ROOM.get(request.sid)
+        p = r.players.get(request.sid) if r else None
+        if p and p.carry >= 0 and p.down <= 0 and r.phase == "play" and not r.paused:
+            drop_flag(r, p)
+            p.nopick = time.time() + 1.5
+            r.ev.append(["p", round(p.x), round(p.y), p.team])
+
+
+@sio.on("inp")
+def on_inp(d):
+    r = SID_ROOM.get(request.sid)
+    if not r:
+        return
+    p = r.players.get(request.sid)
+    if not p:
+        return
+    try:
+        dx, dy, a = float(d["dx"]), float(d["dy"]), float(d["a"])
+        n = math.hypot(dx, dy)
+        if n > 1:
+            dx, dy = dx / n, dy / n
+        p.dx, p.dy, p.a, p.fire = dx, dy, a, bool(d.get("f"))
+        p.g = 1 if d.get("g") == 1 else 0
+        p.w = 1 if d.get("w") == 1 else 0
+        # Client tự dự đoán vị trí (không giật khi ping cao); máy chủ chỉ kiểm tra có hợp lệ không
+        if "x" in d and d.get("ep") == p.ep and p.down <= 0 and r.phase == "play" and not r.paused:
+            nx, ny, now = float(d["x"]), float(d["y"]), time.time()
+            dt = min(max(now - p.tpos, 0.05), 2.0) if p.tpos else 0.15
+            if math.hypot(nx - p.x, ny - p.y) <= SPEED * 1.3 * dt + 12 and not hit_wall(nx, ny, PR):
+                p.x, p.y, p.tpos = nx, ny, now
+            else:
+                p.ep += 1; p.tpos = time.time() + 2.0  # quá nhanh hoặc xuyên tường: kéo client về vị trí máy chủ
+    except Exception:
+        pass
+
+
+# ---------- vật lý ----------
+def hit_wall(x, y, r):
+    if x < r or y < r or x > W - r or y > H - r:
+        return True
+    for wx, wy, ww, wh in WALLS:
+        cx = min(max(x, wx), wx + ww); cy = min(max(y, wy), wy + wh)
+        if (x - cx) ** 2 + (y - cy) ** 2 < r * r:
+            return True
+    return False
+
+
+def in_river(x, y):
+    return abs(RIVER_K0 * x - y) / math.hypot(RIVER_K0, 1) < RIVER_HALF
+
+
+def in_bush(x, y):
+    return any(bx <= x <= bx + bw and by <= y <= by + bh for bx, by, bw, bh in BUSHES)
+
+
+def spawn(r, p):
+    mates = sorted((q for q in r.players.values() if q.team == p.team), key=lambda q: q.pid)
+    i = mates.index(p); n = len(mates)
+    p.x = BASES[p.team][0]; p.y = BASES[p.team][1] + (i - (n - 1) / 2) * 1.3 * T
+    p.ep += 1; p.tpos = time.time() + 2.0  # buộc client chốt lại vị trí theo máy chủ (2s không tự mô phỏng)
+
+
+def drop_flag(r, p):
+    if 0 <= p.carry < len(r.flags):
+        f = r.flags[p.carry]; f["c"] = None; f["planted"] = -1; f["x"], f["y"] = p.x, p.y
+    p.carry = -1; p.prog = 0.0; p.pf = -1
+
+
+def take(r, p, k, f):
+    p.carry = k; f["c"] = p; f["planted"] = -1; p.prog = 0.0; p.pf = -1
+    r.ev.append(["p", round(p.x), round(p.y), p.team])
+
+
+MON = {0: dict(hp=3, sp=70, r=14, dmg=1, pts=10, exp=(1, 2), heal=0.12, rt=25),    # slime
+       1: dict(hp=2, sp=120, r=12, dmg=1, pts=15, exp=(1, 3), heal=0.12, rt=25),   # dơi
+       2: dict(hp=14, sp=45, r=26, dmg=2, pts=60, exp=(5, 8), heal=1.0, rt=45),    # golem (trùm giữa bản đồ)
+       3: dict(hp=25, sp=0, r=22, dmg=2, pts=80, exp=(6, 9), heal=1.0, rt=45)}     # thần giữ cờ: đứng yên, bắn laze
+
+
+def make_mons(r):
+    """Đầu mỗi round: 4 slime + 4 dơi đặt đối xứng hai đội, 1 golem ở giữa, mỗi lá cờ có 1 thần giữ cờ bắn laze."""
+    r.mons, r.orbs, r.kp = [], [], [0, 0]
+    def free(x, y, rad):
+        return not hit_wall(x, y, rad + 6) and all(math.hypot(x - b[0], y - b[1]) > 450 for b in BASES)
+    def add(t, x, y):
+        c = MON[t]
+        r.mons.append({"id": len(r.mons), "t": t, "x": x, "y": y, "hx": x, "hy": y, "hp": c["hp"], "mhp": c["hp"],
+                       "r": c["r"], "cd": 0.0, "alive": True, "rt": 0.0, "ch": 0.0, "fl": 0.0, "lcd": 2.0, "la": 0.0, "L": 0.0})
+    for t in (0, 0, 1, 1):
+        for _ in range(80):
+            x, y = random.uniform(0.15, 0.85) * W, random.uniform(0.15, 0.85) * H
+            if free(x, y, 14) and free(W - x, H - y, 14):
+                add(t, x, y); add(t, W - x, H - y); break
+    for _ in range(80):
+        x, y = W / 2 + random.uniform(-160, 160), H / 2 + random.uniform(-160, 160)
+        if free(x, y, 26):
+            add(2, x, y); break
+    for f in r.flags:  # mỗi lá cờ có một thần giữ cờ đứng cạnh
+        for _ in range(40):
+            a = random.uniform(0, 6.283); x, y = f["x"] + math.cos(a) * 85, f["y"] + math.sin(a) * 85
+            if not hit_wall(x, y, 28):
+                add(3, x, y); break
+
+
+def drop_orb(r, x, y, k, v=0):
+    r.orbs.append({"x": x + random.uniform(-22, 22), "y": y + random.uniform(-22, 22), "k": k, "v": v, "ttl": 25.0})
+
+
+def add_exp(r, p, v):
+    if p.lv >= MAXLV:
+        return
+    p.exp += v
+    while p.lv < MAXLV and p.exp >= p.lv * 6:
+        p.exp -= p.lv * 6; p.lv += 1; p.mhp = HP + p.lv - 1; p.hp = p.mhp
+        r.ev.append(["u", round(p.x), round(p.y), p.team])
+    if p.lv >= MAXLV:
+        p.exp = 0
+
+
+def on_kill(r, victim, team):
+    """Hạ một đối thủ: đội được cộng điểm, rớt ngẫu nhiên 1-2 cục EXP (và đôi khi một trái tim hồi máu)."""
+    r.kp[team] += PTS_KILL
+    for _ in range(random.randint(1, 2)):
+        drop_orb(r, victim.x, victim.y, 0, random.randint(2, 4) + victim.lv - 1)
+    if random.random() < 0.2:
+        drop_orb(r, victim.x, victim.y, 1)
+
+
+def hit_mon(r, mo, team):
+    mo["hp"] -= 1
+    r.ev.append(["h", round(mo["x"]), round(mo["y"]), team])
+    if mo["hp"] > 0:
+        return
+    c = MON[mo["t"]]
+    mo["alive"] = False; mo["rt"] = c["rt"]
+    r.kp[team] += c["pts"]
+    for _ in range(random.randint(3, 4) if mo["t"] >= 2 else random.randint(1, 2)):
+        drop_orb(r, mo["x"], mo["y"], 0, random.randint(*c["exp"]))
+    if random.random() < c["heal"]:
+        drop_orb(r, mo["x"], mo["y"], 1)
+    r.ev.append(["d", round(mo["x"]), round(mo["y"]), team])
+
+
+LASER_CHARGE, LASER_CD, LASER_DMG, LASER_RANGE = 0.9, 2.6, 2, 480.0
+
+
+def laser_step(r, mo):
+    """Thần giữ cờ: ngắm người gần nhất, nạp 0.9s (khoá hướng ở 0.35s cuối) rồi bắn tia laze xuyên người, dừng ở tường."""
+    mo["fl"] = max(0.0, mo["fl"] - DT); mo["lcd"] -= DT
+    tgt, bd = None, LASER_RANGE
+    for p in r.players.values():
+        d = math.hypot(p.x - mo["x"], p.y - mo["y"])
+        if p.down <= 0 and d < bd:
+            tgt, bd = p, d
+    ch = mo["ch"]
+    if ch <= 0 and tgt and mo["lcd"] <= 0:
+        ch = LASER_CHARGE
+    if ch > 0:
+        if ch > 0.35 and tgt:
+            mo["la"] = math.atan2(tgt.y - mo["y"], tgt.x - mo["x"])
+        ca, sa = math.cos(mo["la"]), math.sin(mo["la"]); L = 0.0
+        while L < 520 and not hit_wall(mo["x"] + ca * L, mo["y"] + sa * L, 3):
+            L += 20
+        mo["L"] = L; ch -= DT
+        if ch <= 0:
+            ch = 0.0; mo["fl"] = 0.3; mo["lcd"] = LASER_CD
+            for p in r.players.values():
+                dx, dy = p.x - mo["x"], p.y - mo["y"]
+                if p.down <= 0 and 0 <= dx * ca + dy * sa <= L and abs(-dx * sa + dy * ca) < PR + 7:
+                    p.hp -= LASER_DMG
+                    r.ev.append(["h", round(p.x), round(p.y), p.team])
+                    if p.hp <= 0:
+                        p.down = DOWN_S; drop_flag(r, p)
+                        r.ev.append(["d", round(p.x), round(p.y), p.team])
+    mo["ch"] = ch
+
+
+def mon_step(r):
+    for mo in r.mons:
+        if not mo["alive"]:
+            mo["rt"] -= DT
+            if mo["rt"] <= 0:
+                mo.update(alive=True, hp=mo["mhp"], x=mo["hx"], y=mo["hy"], ch=0.0, fl=0.0, lcd=2.0)
+            continue
+        c = MON[mo["t"]]; mo["cd"] -= DT
+        if mo["t"] == 3:
+            laser_step(r, mo)
+        tg, bd = None, 300.0
+        for p in r.players.values():
+            d = math.hypot(p.x - mo["x"], p.y - mo["y"])
+            if p.down <= 0 and d < bd and math.hypot(p.x - mo["hx"], p.y - mo["hy"]) < 520:
+                tg, bd = p, d
+        tx, ty = (tg.x, tg.y) if tg else (mo["hx"], mo["hy"])
+        d = math.hypot(tx - mo["x"], ty - mo["y"])
+        if d > 6:
+            a = math.atan2(ty - mo["y"], tx - mo["x"]); sp = c["sp"] * (1.0 if tg else 0.8) * DT
+            nx = mo["x"] + math.cos(a) * sp
+            if not hit_wall(nx, mo["y"], mo["r"]): mo["x"] = nx
+            ny = mo["y"] + math.sin(a) * sp
+            if not hit_wall(mo["x"], ny, mo["r"]): mo["y"] = ny
+        if tg and bd < PR + mo["r"] + 2 and mo["cd"] <= 0:
+            tg.hp -= c["dmg"]; mo["cd"] = 1.1
+            r.ev.append(["h", round(tg.x), round(tg.y), tg.team])
+            if tg.hp <= 0:
+                tg.down = DOWN_S; drop_flag(r, tg)
+                r.ev.append(["d", round(tg.x), round(tg.y), tg.team])
+
+
+def orb_step(r):
+    keep = []
+    for o in r.orbs:
+        o["ttl"] -= DT
+        if o["ttl"] <= 0:
+            continue
+        got = next((p for p in r.players.values() if p.down <= 0 and math.hypot(p.x - o["x"], p.y - o["y"]) < 30
+                    and (o["k"] == 0 or p.hp < p.mhp)), None)
+        if got:
+            if o["k"]: got.hp += 1
+            else: add_exp(r, got, o["v"])
+            r.ev.append(["o", round(got.x), round(got.y), got.team])
+            continue
+        keep.append(o)
+    r.orbs = keep
+
+
+def step(r, live):
+    for p in r.players.values():
+        if p.down > 0:
+            p.down -= DT
+            if p.down <= 0:
+                p.hp = p.mhp; p.down = 0; spawn(r, p)
+            continue
+        if not live:
+            continue
+        if time.time() - p.tpos > 0.5:  # client không gửi vị trí (mất kết nối/đời cũ) thì máy chủ tự mô phỏng
+            sp = SPEED * (1 + 0.04 * (p.lv - 1)) * (CARRY_K if p.carry >= 0 else 1) * (RIVER_K if in_river(p.x, p.y) else 1)
+            nx = p.x + p.dx * sp * DT
+            if not hit_wall(nx, p.y, PR): p.x = nx
+            ny = p.y + p.dy * sp * DT
+            if not hit_wall(p.x, ny, PR): p.y = ny
+        p.cool -= DT
+        p.sw -= DT
+        if p.fire and p.carry < 0 and p.cool <= 0 and p.w == 1:
+            p.cool, p.sw = SWORD_COOL, SWORD_T
+            r.ev.append(["m", round(p.x), round(p.y), p.team])
+            for mo in r.mons:
+                if mo["alive"] and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < SWORD_R + mo["r"] + 4 * (p.lv - 1):
+                    ang = abs((math.atan2(mo["y"] - p.y, mo["x"] - p.x) - p.a + math.pi) % (2 * math.pi) - math.pi)
+                    if ang < 1.05 or math.hypot(mo["x"] - p.x, mo["y"] - p.y) < PR + mo["r"] + 6:
+                        hit_mon(r, mo, p.team)
+            for q in r.players.values():
+                if q.team == p.team or q.down > 0:
+                    continue
+                dd = math.hypot(q.x - p.x, q.y - p.y)
+                if dd >= SWORD_R + 4 * (p.lv - 1):
+                    continue
+                ang = abs((math.atan2(q.y - p.y, q.x - p.x) - p.a + math.pi) % (2 * math.pi) - math.pi)
+                if dd < PR + 6 or ang < 1.05:
+                    q.hp -= 1
+                    r.ev.append(["h", round(q.x), round(q.y), q.team])
+                    if q.hp <= 0:
+                        q.down = DOWN_S; drop_flag(r, q)
+                        r.ev.append(["d", round(q.x), round(q.y), q.team])
+                        on_kill(r, q, p.team)
+        elif p.fire and p.carry < 0 and p.cool <= 0:
+            p.cool = COOL
+            r.bullets.append({"x": p.x + math.cos(p.a) * (PR + 3), "y": p.y + math.sin(p.a) * (PR + 3),
+                              "vx": math.cos(p.a) * BSPEED, "vy": math.sin(p.a) * BSPEED, "t": p.team, "life": BLIFE})
+            r.ev.append(["s", round(p.x), round(p.y), p.team])
+    if not live:
+        return
+    for p in r.players.values():
+        if p.down > 0:
+            continue
+        if p.carry >= 0:
+            bx, by = BASES[p.team]
+            if math.hypot(p.x - bx, p.y - by) < BASE_R:
+                p.prog += DT / PLANT_S
+                if p.prog >= 1:
+                    f = r.flags[p.carry]
+                    used = {g["slot"] for g in r.flags if g["planted"] == p.team}
+                    slot = next(i for i in range(4) if i not in used)
+                    f["c"] = None; f["planted"] = p.team; f["slot"] = slot
+                    f["x"] = bx + (1 if p.team == 0 else -1) * 1.5 * T; f["y"] = by + (slot - 1.5) * 1.1 * T
+                    r.ev.append(["pl", round(f["x"]), round(f["y"]), p.team])
+                    p.carry = -1; p.prog = 0.0
+            else:
+                p.prog = 0.0
+            continue
+        tgt = -1
+        for k, f in enumerate(r.flags):
+            if f["c"] is None and f["planted"] != p.team and time.time() >= p.nopick and math.hypot(p.x - f["x"], p.y - f["y"]) < 30:
+                tgt = k; break
+        if tgt < 0:
+            p.prog = 0.0; p.pf = -1
+        elif r.flags[tgt]["planted"] == -1:
+            take(r, p, tgt, r.flags[tgt])
+        else:
+            if p.pf != tgt:
+                p.pf = tgt; p.prog = 0.0
+            p.prog += DT / STEAL_S
+            if p.prog >= 1:
+                take(r, p, tgt, r.flags[tgt])
+    for f in r.flags:
+        if f["c"] is not None:
+            f["x"], f["y"] = f["c"].x, f["c"].y
+    keep = []
+    for b in r.bullets:
+        b["x"] += b["vx"] * DT; b["y"] += b["vy"] * DT; b["life"] -= DT
+        if b["life"] <= 0 or hit_wall(b["x"], b["y"], 2):
+            continue
+        hit = None
+        for p in r.players.values():
+            if p.team != b["t"] and p.down <= 0 and math.hypot(p.x - b["x"], p.y - b["y"]) < PR + 3:
+                hit = p; break
+        if not hit:
+            mh = next((mo for mo in r.mons if mo["alive"] and math.hypot(mo["x"] - b["x"], mo["y"] - b["y"]) < mo["r"] + 3), None)
+            if mh:
+                hit_mon(r, mh, b["t"])
+                continue
+        if hit:
+            hit.hp -= 1
+            r.ev.append(["h", round(hit.x), round(hit.y), hit.team])
+            if hit.hp <= 0:
+                hit.down = DOWN_S; drop_flag(r, hit)
+                r.ev.append(["d", round(hit.x), round(hit.y), hit.team])
+                on_kill(r, hit, b["t"])
+            continue
+        keep.append(b)
+    r.bullets = keep
+    if live:
+        mon_step(r); orb_step(r)
+
+
+def send_state(r):
+    """Mỗi đội nhận một bản trạng thái riêng: địch đứng trong bụi cỏ (không có đồng đội ở gần) sẽ bị ẩn."""
+    evs, r.ev = r.ev, []
+    for t in (0, 1):
+        team = [p for p in r.players.values() if p.team == t]
+        if not team:
+            continue
+        seers = [p for p in team if p.down <= 0]
+        vis = [p for p in r.players.values() if p.team == t or not in_bush(p.x, p.y)
+               or any(math.hypot(p.x - s.x, p.y - s.y) < SEE_R for s in seers)]
+        ids = {p.pid for p in vis}
+        st = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused,
+              "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp] for p in vis],
+              "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] if (not f["c"] or f["c"].pid in ids)
+                    else [-1, -1, f["c"].pid, -1] for f in r.flags],
+              "b": [[round(b["x"]), round(b["y"]), b["t"]] for b in r.bullets], "ev": evs, "kp": r.kp,
+              "mo": [[mo["id"], mo["t"], round(mo["x"]), round(mo["y"]), mo["hp"], round(mo["ch"], 2), round(mo["la"], 2), round(mo["fl"], 2), round(mo["L"])]
+                     for mo in r.mons if mo["alive"]],
+              "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs]}
+        for p in team:
+            sio.emit("st", st, to=p.sid)
+    if r.specs:
+        everyone = list(r.players.values())
+        full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1,
+                "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp] for p in everyone],
+                "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] for f in r.flags],
+                "b": [[round(b["x"]), round(b["y"]), b["t"]] for b in r.bullets], "ev": evs, "kp": r.kp,
+                "mo": [[mo["id"], mo["t"], round(mo["x"]), round(mo["y"]), mo["hp"], round(mo["ch"], 2), round(mo["la"], 2), round(mo["fl"], 2), round(mo["L"])]
+                       for mo in r.mons if mo["alive"]],
+                "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs]}
+        for p in r.specs.values():
+            sio.emit("st", full, to=p.sid)
+
+
+def roster(r):
+    return [{"pid": p.pid, "nick": p.nick, "team": p.team} for p in r.players.values()]
+
+
+def wait(r, secs, live, phase):
+    end = time.time() + secs; nxt = last = time.time()
+    while True:
+        if r.dead or r.abort:
+            return False
+        now = time.time()
+        if r.paused:
+            end += now - last; nxt = now
+        last = now
+        left = end - now
+        if left <= 0:
+            return True
+        with LOCK:
+            r.phase = phase; r.tl = left
+            if phase in ("read", "play"):
+                if not r.paused:
+                    step(r, live)
+                send_state(r)
+        nxt += DT
+        sio.sleep(max(0.0, nxt - time.time()))
+
+
+def play_round(r, i):
+    q = next_question(); n = len(q["options"])
+    spots = FLAG_SETS[min(4, max(2, n))][:n]
+    random.shuffle(spots)
+    with LOCK:
+        r.q, r.round, r.bullets, r.ev, r.paused = q, i, [], [], False
+        r.flags = [{"x": spots[k][0] * T, "y": spots[k][1] * T, "c": None, "planted": -1, "slot": 0, "letter": k} for k in range(n)]
+        for p in r.players.values():
+            p.reset(); spawn(r, p)
+        make_mons(r)
+        sio.emit("rd", {"i": i, "n": r.rounds, "q": {"question": q["question"], "options": q["options"]},
+                        "players": roster(r), "map": MAPINFO}, to=r.code)
+    if not wait(r, READ_S, False, "read"):
+        return False
+    if not wait(r, PLAY_S, True, "play"):
+        return False
+    with LOCK:
+        planted = [[f["letter"], f["planted"]] for f in r.flags if f["planted"] >= 0]
+        delta = [0, 0]
+        for letter, t in planted:
+            delta[t] += PTS_OK if letter == q["ok"] else PTS_BAD
+        delta[0] += r.kp[0]; delta[1] += r.kp[1]  # điểm hạ quái và hạ đối thủ
+        r.total = [r.total[0] + delta[0], r.total[1] + delta[1]]
+        res = {"ok": q["ok"], "explanation": q["explanation"], "planted": planted, "delta": delta, "tot": r.total, "last": i == r.rounds - 1}
+        r.bullets = []
+    sio.emit("res", res, to=r.code)
+    return wait(r, RESULT_S, False, "result")
+
+
+def run_match(r):
+    load_questions()
+    r.total = [0, 0]
+    for i in range(r.rounds):
+        if not play_round(r, i):
+            break
+    with LOCK:
+        r.state = "lobby"; r.phase = "lobby"; r.flags = []; r.bullets = []; r.paused = False
+        for p in r.players.values():
+            p.reset()
+    if not r.dead:
+        sio.emit("end", {"tot": r.total, "aborted": r.abort}, to=r.code)
+        r.abort = False
+        with LOCK:
+            push(r)
+
+
+# ---------- Cloudflare Tunnel (giống snake-AI) ----------
+_cloudflared_proc = None
+_cloudflared_url = None
+
+
+def _cloudflared_asset():
+    sysname = platform.system().lower()
+    arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64",
+            "armv7l": "arm", "armv6l": "arm", "i386": "386", "i686": "386"}.get(platform.machine().lower(), "amd64")
+    if sysname == "linux":
+        return f"cloudflared-linux-{arch}", False
+    if sysname == "windows":
+        return f"cloudflared-windows-{'386' if arch == '386' else 'amd64'}.exe", False
+    if sysname == "darwin":
+        return f"cloudflared-darwin-{'arm64' if arch == 'arm64' else 'amd64'}.tgz", True
+    return None, False
+
+
+def download_cloudflared(dest_dir):
+    asset, is_tgz = _cloudflared_asset()
+    if not asset:
+        return None
+    url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/{asset}"
+    local_path = os.path.join(dest_dir, "cloudflared.exe" if os.name == "nt" else "cloudflared")
+    print(f"[*] Đang tải cloudflared: {url}")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        blob = resp.read()
+    if len(blob) < 1_000_000:
+        raise RuntimeError(f"File tải về quá nhỏ ({len(blob)} byte), có thể bị chặn mạng")
+    if is_tgz:
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tf:
+            member = next(m for m in tf.getmembers() if m.name.endswith("cloudflared"))
+            with open(local_path, "wb") as out:
+                out.write(tf.extractfile(member).read())
+    else:
+        with open(local_path, "wb") as out:
+            out.write(blob)
+    if os.name != "nt":
+        os.chmod(local_path, 0o755)
+    return local_path
+
+
+def _cloudflared_ok(path):
+    try:
+        return subprocess.run([path, "--version"], capture_output=True, timeout=20).returncode == 0
+    except Exception:
+        return False
+
+
+def ensure_cloudflared_binary():
+    found = shutil.which("cloudflared")
+    if found and _cloudflared_ok(found):
+        return found
+    local_path = os.path.join(BASE, "cloudflared.exe" if os.name == "nt" else "cloudflared")
+    if os.path.exists(local_path):
+        if _cloudflared_ok(local_path):
+            return local_path
+        print("[!] cloudflared bị hỏng, đang xoá và tải lại...")
+        try:
+            os.remove(local_path)
+        except OSError as e:
+            print(f"[!] Không xoá được {local_path}: {e}")
+            return None
+    try:
+        path = download_cloudflared(BASE)
+        if path and _cloudflared_ok(path):
+            return path
+        print("[!] File cloudflared tải về không chạy được.")
+        if path and os.path.exists(path):
+            os.remove(path)
+    except Exception as e:
+        print(f"[!] Không thể tự động tải cloudflared: {e}")
+    return None
+
+
+def launch_cloudflared(bin_path):
+    if TUNNEL_TOKEN and TUNNEL_HOST:
+        cfg = os.path.join(BASE, "flag_cloudflared.yml")   # tên riêng, không đè config.yml của snake-AI
+        with open(cfg, "w", encoding="utf-8") as f:
+            f.write(f"tunnel: {TUNNEL_TOKEN}\n\nprotocol: http2\ningress:\n  - hostname: {TUNNEL_HOST}\n"
+                    f"    service: http://{HOST}:{PORT}\n  - service: http_status:404\n")
+        cmd = [bin_path, "tunnel", "--no-autoupdate", "--config", cfg, "run", "--token", TUNNEL_TOKEN]
+    else:
+        if TUNNEL_TOKEN or TUNNEL_HOST:
+            print("[!] Thiếu TUNNEL_TOKEN hoặc TUNNEL_HOST - dùng domain tạm trycloudflare.com.")
+        cmd = [bin_path, "tunnel", "--no-autoupdate", "--url", f"http://{HOST}:{PORT}"]
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+
+
+def monitor_cloudflared(proc):
+    global _cloudflared_url
+    ansi = re.compile(r"\x1b\[[0-9;]*[mK]")
+    try:
+        with proc.stdout:
+            for line in iter(proc.stdout.readline, ""):
+                clean_line = ansi.sub("", line).strip()
+                if not clean_line:
+                    continue
+                print(f"[CLOUDFLARED] {clean_line}")
+                if TUNNEL_TOKEN and TUNNEL_HOST:
+                    if _cloudflared_url is None and re.search(r"[Rr]egistered tunnel connection", clean_line):
+                        _cloudflared_url = TUNNEL_HOST
+                        print("\n" + "=" * 60 + f"\n Cướp Cờ đang chạy tại: https://{TUNNEL_HOST}\n" + "=" * 60 + "\n")
+                    continue
+                m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", clean_line)
+                if m and m.group(0) != _cloudflared_url:
+                    _cloudflared_url = m.group(0)
+                    print("\n" + "=" * 60 + f"\n Cướp Cờ đang chạy tại: {_cloudflared_url}\n" + "=" * 60 + "\n")
+    except Exception:
+        pass
+
+
+def start_tunnel_and_watchdog():
+    global _cloudflared_proc
+    bin_path = ensure_cloudflared_binary()
+    if not bin_path:
+        print("[!] TUNNEL=true nhưng không tìm được/tải được cloudflared. Bỏ qua tunnel.")
+        return
+    _cloudflared_proc = launch_cloudflared(bin_path)
+    threading.Thread(target=monitor_cloudflared, args=(_cloudflared_proc,), daemon=True).start()
+    while True:
+        time.sleep(1)
+        if _cloudflared_proc.poll() is not None:
+            print("[!] cloudflared dừng đột ngột, đang khởi động lại...")
+            time.sleep(2)
+            _cloudflared_proc = launch_cloudflared(bin_path)
+            threading.Thread(target=monitor_cloudflared, args=(_cloudflared_proc,), daemon=True).start()
+
+
+def stop_tunnel():
+    if _cloudflared_proc is not None:
+        try:
+            _cloudflared_proc.terminate()
+        except Exception:
+            pass
+
+
+class NoDelayHandler(WSGIRequestHandler):
+    def setup(self):
+        super().setup()
+        try:
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+
+
+def lan_ip():
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
+            sk.connect(("10.255.255.255", 1))
+            return sk.getsockname()[0]
+    except Exception:
+        return None
+
+
+# ---------- phục vụ web ----------
+@app.route("/")
+def index():
+    return send_from_directory(BASE, "flag.html")
+
+
+@app.route("/<path:f>")
+def static_files(f):
+    if f in ("socket_io_min.js", "flag.html"):   # question.json cố tình KHÔNG được trả ra
+        return send_from_directory(BASE, f)
+    abort(404)
+
+
+if __name__ == "__main__":
+    load_questions()
+    print(f"[*] Bản đồ {TW}x{TH} ô, {HZ} lần/giây. CORS: {ORIGINS if ORIGINS == '*' else ', '.join(ORIGINS)}")
+    print(f"[*] Mở http://{'127.0.0.1' if HOST in ('0.0.0.0', '::') else HOST}:{PORT}/")
+    if HOST in ("0.0.0.0", "::") and lan_ip():
+        print(f"[*] Máy khác cùng Wi-Fi/LAN mở: http://{lan_ip()}:{PORT}/")
+    elif HOST not in ("0.0.0.0", "::"):
+        print("[*] (Muốn máy khác trong LAN vào được: đặt HOST=0.0.0.0 trong flag.env)")
+    if TUNNEL_ENABLED:
+        threading.Thread(target=start_tunnel_and_watchdog, daemon=True).start()
+    else:
+        print("[*] TUNNEL=false - không chạy cloudflared, chỉ phục vụ nội bộ.")
+    try:
+        sio.run(app, host=HOST, port=PORT, debug=False, allow_unsafe_werkzeug=True, request_handler=NoDelayHandler)
+    except KeyboardInterrupt:
+        print("\n[*] Đang thoát...")
+        stop_tunnel(); os._exit(0)
+    finally:
+        stop_tunnel()
