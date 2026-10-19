@@ -171,7 +171,7 @@ function drawRoom(){const r=room;$('#rt').textContent=(r.pw?'🔒 ':'')+r.name+'
 function banner(t){const b=$('#banner');b.textContent=t;b.classList.remove('go');void b.offsetWidth;b.classList.add('go')}
 
 /* ================= NÚT: TOÀN MÀN HÌNH / ÂM THANH / TẠM DỪNG / THOÁT ================= */
-function fsEnter(){const d=document,e=d.documentElement;if(d.fullscreenElement||d.webkitFullscreenElement)return;const f=e.requestFullscreen||e.webkitRequestFullscreen;if(!f)return;try{Promise.resolve(f.call(e)).then(()=>{try{screen.orientation.lock('landscape').catch(()=>{})}catch(_){}}).catch(()=>{})}catch(_){}}
+function fsEnter(){const d=document,e=d.documentElement;if(!matchMedia('(pointer:coarse)').matches)return;/* máy tính (Windows...): không tự toàn màn hình, chỉ bật bằng nút */if(d.fullscreenElement||d.webkitFullscreenElement)return;const f=e.requestFullscreen||e.webkitRequestFullscreen;if(!f)return;try{Promise.resolve(f.call(e)).then(()=>{try{screen.orientation.lock('landscape').catch(()=>{})}catch(_){}}).catch(()=>{})}catch(_){}}
 ['pointerdown','touchend','keydown'].forEach(t=>addEventListener(t,()=>{if(inGame)fsEnter()},{capture:true}));
 function fsToggle(){const d=document,e=d.documentElement;if(d.fullscreenElement||d.webkitFullscreenElement){(d.exitFullscreen||d.webkitExitFullscreen).call(d);return}
  const f=e.requestFullscreen||e.webkitRequestFullscreen;if(!f){toast('Trình duyệt này không hỗ trợ toàn màn hình. Trên iPhone: Chia sẻ → Thêm vào Màn hình chính.');return}
