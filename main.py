@@ -9,7 +9,7 @@ Cướp Cờ Đáp Án AI - máy chủ game chiến thuật 1v1 .. 5v5 (Flask + 
 - Chủ phòng có thể tạm dừng cả trận. Có Cloudflare Tunnel (cloudflared) giống snake-AI.
 - question.json KHÔNG được phục vụ ra web để học sinh không xem được đáp án.
 
-Cấu hình: copy flag.env.example thành flag.env (cạnh file này). Chạy: python flag_server.py
+Cấu hình: copy flag.env.example thành flag.env (cạnh file này). Chạy: python gunicorn.py (Gunicorn, khuyên dùng) hoặc python main.py (máy chủ dev)
 """
 import io, os, re, sys, ssl, json, math, time, random, shutil, socket, hashlib, hmac, platform, tarfile
 import threading, subprocess, urllib.request
@@ -1201,7 +1201,14 @@ def static_files(f):
     abort(404)
 
 
-if __name__ == "__main__":
+_boot = {"master": False, "worker": False}
+
+
+def startup_worker():
+    """Việc cần làm trong tiến trình chạy game (nơi giữ ROOMS/trận đấu): nạp câu hỏi, in địa chỉ, mở HTTPS trực tiếp."""
+    if _boot["worker"]:
+        return
+    _boot["worker"] = True
     load_questions()
     print(f"[*] Bản đồ {TW}x{TH} ô, {HZ} lần/giây. CORS: {ORIGINS if ORIGINS == '*' else ', '.join(ORIGINS)}")
     print(f"[*] Mở http://{'127.0.0.1' if HOST in ('0.0.0.0', '::') else HOST}:{PORT}/")
@@ -1210,10 +1217,23 @@ if __name__ == "__main__":
     elif HOST not in ("0.0.0.0", "::"):
         print("[*] (Muốn máy khác trong LAN vào được: đặt HOST=0.0.0.0 trong flag.env)")
     start_https()
+
+
+def startup_master():
+    """Chỉ chạy một lần (tiến trình cha của Gunicorn, hoặc tiến trình chính khi chạy python main.py): bật Cloudflare Tunnel."""
+    if _boot["master"]:
+        return
+    _boot["master"] = True
     if TUNNEL_ENABLED:
         threading.Thread(target=start_tunnel_and_watchdog, daemon=True).start()
     else:
         print("[*] TUNNEL=false - không chạy cloudflared, chỉ phục vụ nội bộ.")
+
+
+def run_dev():
+    """Chạy bằng máy chủ phát triển của Werkzeug (python main.py). Dùng khi không có Gunicorn (vd. Windows)."""
+    startup_worker()
+    startup_master()
     try:
         sio.run(app, host=HOST, port=PORT, debug=False, allow_unsafe_werkzeug=True, request_handler=NoDelayHandler)
     except KeyboardInterrupt:
@@ -1221,3 +1241,7 @@ if __name__ == "__main__":
         stop_tunnel(); os._exit(0)
     finally:
         stop_tunnel()
+
+
+if __name__ == "__main__":
+    run_dev()
