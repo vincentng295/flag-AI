@@ -1169,7 +1169,7 @@ def index():
 
 @app.route("/<path:f>")
 def static_files(f):
-    if f in ("socket_io_min.js", "flag.html"):   # question.json cố tình KHÔNG được trả ra
+    if f in ("socket_io_min.js", "flag.html", "manifest.json", "favicon.ico", "favicon-32.png", "icon-192.png", "icon-512.png"):   # question.json cố tình KHÔNG được trả ra
         return send_from_directory(BASE, f)
     abort(404)
 
