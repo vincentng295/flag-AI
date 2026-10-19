@@ -201,6 +201,7 @@ class P:
         s.nopick = 0.0  # sau khi thả cờ, chưa nhặt lại được ngay
         s.ep = 0; s.tpos = 0.0  # ep: số lần máy chủ ép vị trí; tpos: lúc nhận vị trí client gần nhất
         s.g = 0; s.w = 0  # g: 0 nam/1 nữ; w: 0 súng bóng nước/1 kiếm nhựa
+        s.bot = False; s.ai = {}
         s.reset()
 
     def reset(s):
@@ -210,8 +211,9 @@ class P:
 
 
 class Room:
-    def __init__(s, code, name, pw, size, rounds, host):
+    def __init__(s, code, name, pw, size, rounds, host, pve=False):
         s.code, s.name, s.pw, s.size, s.rounds, s.host = code, name, pw, size, rounds, host
+        s.pve = pve  # PvE: đội Đỏ (1) là bot do máy điều khiển
         s.players = {}; s.specs = {}; s.nextpid = 1; s.state = "lobby"; s.phase = "lobby"
         s.flags = []; s.bullets = []; s.q = None; s.round = 0; s.tl = 0.0; s.ev = []
         s.total = [0, 0]; s.dead = False; s.abort = False; s.paused = False
@@ -232,11 +234,16 @@ def hpw(pw):
     return hashlib.sha256(pw.encode()).hexdigest() if pw else ""
 
 
+def cap(r):
+    """Số chỗ chơi tối đa của người thật: PvP = 2 đội, PvE = chỉ đội Xanh (đội Đỏ là máy)."""
+    return r.size if r.pve else r.size * 2
+
+
 def info(r):
     return {"code": r.code, "name": r.name, "size": r.size, "rounds": r.rounds, "pw": bool(r.pw), "state": r.state,
-            "n": len(r.players), "ns": len(r.specs),
+            "pve": r.pve, "max": cap(r), "n": sum(1 for q in r.players.values() if not q.bot), "ns": len(r.specs),
             "host": (r.players.get(r.host) or r.specs.get(r.host) or P(0, "", 0)).pid,
-            "teams": [[{"pid": p.pid, "nick": p.nick} for p in r.players.values() if p.team == t] for t in (0, 1)],
+            "teams": [[{"pid": p.pid, "nick": p.nick} for p in r.players.values() if p.team == t and not p.bot] for t in (0, 1)],
             "specs": [{"pid": p.pid, "nick": p.nick} for p in r.specs.values()]}
 
 
@@ -255,7 +262,7 @@ def add_player(r, sid, nick, spec=False):
         p.team = -1; r.specs[sid] = p
     else:
         c = [sum(1 for q in r.players.values() if q.team == t) for t in (0, 1)]
-        p.team = 0 if c[0] <= c[1] else 1
+        p.team = 0 if (r.pve or c[0] <= c[1]) else 1
         r.players[sid] = p
     SID_ROOM[sid] = r
     join_room(r.code, sid=sid)
@@ -263,6 +270,7 @@ def add_player(r, sid, nick, spec=False):
 
 
 def drop(sid):
+    unq(sid)
     r = SID_ROOM.pop(sid, None)
     if not r:
         return
@@ -274,11 +282,12 @@ def drop(sid):
         pass
     if p and 0 <= p.carry < len(r.flags):
         f = r.flags[p.carry]; f["c"] = None; f["x"], f["y"] = p.x, p.y
-    if not r.players and not r.specs:
+    humans = {k: q for k, q in r.players.items() if not q.bot}
+    if not humans and not r.specs:
         r.dead = True; ROOMS.pop(r.code, None)
     else:
         if r.host == sid:
-            r.host = next(iter(r.players or r.specs)); r.paused = False
+            r.host = next(iter(humans or r.specs)); r.paused = False
         if r.state == "playing" and (not any(q.team == 0 for q in r.players.values()) or not any(q.team == 1 for q in r.players.values())):
             r.abort = True
         push(r)
@@ -307,7 +316,7 @@ def on_create(d):
         code = str(random.randint(1000, 9999))
         while code in ROOMS:
             code = str(random.randint(1000, 9999))
-        r = Room(code, name, hpw(clean(d.get("pw"), 20)), num(d.get("size"), 1, 5, 3), num(d.get("rounds"), 1, 5, 3), sid)
+        r = Room(code, name, hpw(clean(d.get("pw"), 20)), num(d.get("size"), 1, 5, 3), num(d.get("rounds"), 1, 5, 3), sid, bool(d.get("pve")))
         ROOMS[code] = r
         p = add_player(r, sid, nick)
         emit("me", {"pid": p.pid}); push(r)
@@ -323,11 +332,11 @@ def on_join(d):
             return emit("err", "Phòng không còn tồn tại.")
         if r.pw and not hmac.compare_digest(r.pw, hpw(clean(d.get("pw"), 20))):
             return emit("err", "Sai mật khẩu phòng.")
-        if len(r.specs) >= MAX_SPECS and (r.state != "lobby" or len(r.players) >= r.size * 2):
+        if len(r.specs) >= MAX_SPECS and (r.state != "lobby" or sum(1 for q in r.players.values() if not q.bot) >= cap(r)):
             return emit("err", "Ghế khán giả đã đầy.")
         drop(sid)
         # phòng đang chơi hoặc đã đủ người: vào ghế khán giả
-        spec = r.state != "lobby" or len(r.players) >= r.size * 2
+        spec = r.state != "lobby" or len(r.players) >= cap(r)
         p = add_player(r, sid, nick, spec)
         emit("me", {"pid": p.pid}); push(r)
         if r.state == "playing" and r.q:
@@ -364,6 +373,8 @@ def on_seat(d):
                 return emit("err", "Ghế khán giả đã đầy.")
             r.players.pop(sid, None); p.team = -1; r.specs[sid] = p
         else:
+            if r.pve and t == 1:
+                return emit("err", "Phòng PvE: đội Đỏ do máy điều khiển.")
             if sum(1 for q in r.players.values() if q.team == t) >= r.size:
                 return emit("err", "Đội này đã đủ người.")
             r.specs.pop(sid, None); p.team = t; r.players[sid] = p
@@ -379,10 +390,68 @@ def on_team():
         p = r.players.get(request.sid)
         if not p:
             return
+        if r.pve:
+            return emit("err", "Phòng PvE: đội Đỏ do máy điều khiển.")
         t = 1 - p.team
         if sum(1 for q in r.players.values() if q.team == t) >= r.size:
             return emit("err", "Đội kia đã đủ người.")
         p.team = t; push(r)
+
+
+# ---------- ghép trận tự động ----------
+MQ = {}  # cỡ trận (1..5) -> [(sid, nick), ...] theo thứ tự vào hàng chờ
+
+
+def qnotify(size):
+    lst = MQ.get(size, [])
+    for sid, _ in lst:
+        sio.emit("qs", {"size": size, "n": len(lst), "need": size * 2}, to=sid)
+
+
+def unq(sid):
+    for size, lst in MQ.items():
+        if any(x[0] == sid for x in lst):
+            lst[:] = [x for x in lst if x[0] != sid]
+            qnotify(size)
+
+
+def try_match(size):
+    lst = MQ.setdefault(size, [])
+    need = size * 2
+    if len(lst) < need:
+        return
+    grp = lst[:need]; del lst[:need]
+    random.shuffle(grp)
+    code = str(random.randint(1000, 9999))
+    while code in ROOMS:
+        code = str(random.randint(1000, 9999))
+    r = Room(code, f"Ghép nhanh {size}v{size}", "", size, 3, grp[0][0])
+    ROOMS[code] = r
+    for sid, nick in grp:
+        p = add_player(r, sid, nick)  # add_player tự chia đều hai đội (xen kẽ)
+        sio.emit("me", {"pid": p.pid}, to=sid)
+    r.state = "playing"; r.abort = False; r.paused = False
+    sio.start_background_task(run_match, r)
+    push(r)
+    qnotify(size)
+
+
+@sio.on("queue")
+def on_queue(d):
+    d = d or {}; sid = request.sid
+    size = num(d.get("size"), 1, 5, 2)
+    nick = clean(d.get("nick"), 14) or "Người chơi"
+    with LOCK:
+        drop(sid)  # rời phòng/hàng chờ cũ
+        MQ.setdefault(size, []).append((sid, nick))
+        qnotify(size)
+        try_match(size)
+
+
+@sio.on("unqueue")
+def on_unqueue():
+    with LOCK:
+        unq(request.sid)
 
 
 @sio.on("start")
@@ -391,7 +460,10 @@ def on_start():
         r = SID_ROOM.get(request.sid)
         if not r or r.host != request.sid or r.state != "lobby":
             return
-        if not any(p.team == 0 for p in r.players.values()) or not any(p.team == 1 for p in r.players.values()):
+        if r.pve:
+            if not any(p.team == 0 for p in r.players.values()):
+                return emit("err", "Cần ít nhất 1 người chơi ở đội Xanh.")
+        elif not any(p.team == 0 for p in r.players.values()) or not any(p.team == 1 for p in r.players.values()):
             return emit("err", "Mỗi đội cần ít nhất 1 người.")
         r.state = "playing"; r.abort = False; r.paused = False
         sio.start_background_task(run_match, r)
@@ -446,6 +518,86 @@ def on_inp(d):
                 p.ep += 1; p.tpos = time.time() + 2.0  # quá nhanh hoặc xuyên tường: kéo client về vị trí máy chủ
     except Exception:
         pass
+
+
+# ---------- bot (chế độ PvE) ----------
+BOT_NAMES = ["Bé Na", "Tí Nị", "Cún Con", "Mít Ướt", "Sóc Nâu", "Bò Sữa", "Gấu Mập", "Thỏ Ngọc", "Mèo Mướp", "Vịt Bầu",
+             "Chuột Nhắt", "Cáo Đỏ", "Kem Dâu", "Bánh Bao", "Xíu Mại", "Heo Hồng", "Nấm Lùn", "Sao Băng", "Mây Trắng", "Gió Núi",
+             "Sấm Chớp", "Lửa Nhỏ", "Bin Bin", "Susu", "Tôm Hùm", "Cá Heo", "Ốc Sên", "Dế Mèn", "Bướm Vàng", "Ong Mật",
+             "Rồng Con", "Hổ Báo", "Sói Xám", "Đại Bàng", "Khỉ Con", "Voi Con", "Ếch Xanh", "Cú Mèo", "Panda", "Tít Mít"]
+
+
+def add_bots(r):
+    """PvE: tạo số bot bằng số người chơi đội Xanh (tối thiểu 1) ở đội Đỏ, tên ngẫu nhiên không trùng."""
+    humans = sum(1 for p in r.players.values() if p.team == 0 and not p.bot)
+    taken = {p.nick for p in r.players.values()}
+    pool = [n for n in BOT_NAMES if n not in taken]
+    random.shuffle(pool)
+    for _ in range(max(1, min(r.size, humans))):
+        p = P("bot%d" % r.nextpid, pool.pop() if pool else "Bot %d" % random.randint(10, 99), r.nextpid)
+        r.nextpid += 1
+        p.bot = True; p.team = 1; p.g = random.randint(0, 1); p.w = 0
+        p.ai = {"stuck_t": 0.0, "lx": 0.0, "ly": 0.0, "det": 0.0, "dd": (0.0, 0.0)}
+        r.players[p.sid] = p
+
+
+def remove_bots(r):
+    for k in [k for k, q in r.players.items() if q.bot]:
+        r.players.pop(k, None)
+
+
+def bot_ai(r, p):
+    """Bot đơn giản: nhặt cờ chưa cắm cho đội mình -> mang về căn cứ; bắn địch trong tầm; đuổi người đang vác cờ; chống kẹt tường."""
+    ai = p.ai
+    foes = [q for q in r.players.values() if q.team != p.team and q.down <= 0]
+    carriers = [q for q in foes if q.carry >= 0]
+    tgt, bd = None, 1e9
+    for q in foes:
+        d = math.hypot(q.x - p.x, q.y - p.y)
+        if d < 420 and d - (150 if q.carry >= 0 else 0) < bd:
+            tgt, bd = q, d - (150 if q.carry >= 0 else 0)
+    shoot = None
+    if tgt:
+        shoot = (tgt.x, tgt.y)
+    elif p.carry < 0:
+        for mo in r.mons:
+            if mo["alive"] and mo["t"] != 3 and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < 230:
+                shoot = (mo["x"], mo["y"]); break
+    home = p.carry >= 0
+    if home:
+        dest = BASES[p.team]
+    else:
+        cands = [f for f in r.flags if f["c"] is None and f["planted"] != p.team]
+        if carriers:
+            c = min(carriers, key=lambda q: math.hypot(q.x - p.x, q.y - p.y))
+            dest = (c.x, c.y)
+        elif cands:
+            cands.sort(key=lambda f: math.hypot(f["x"] - p.x, f["y"] - p.y))
+            f = cands[1] if len(cands) > 1 and p.pid % 3 == 0 else cands[0]
+            dest = (f["x"], f["y"])
+        else:
+            dest, home = BASES[p.team], True
+    d = math.hypot(dest[0] - p.x, dest[1] - p.y)
+    stop = BASE_R * 0.4 if home else (140 if carriers else 8)
+    dx = dy = 0.0
+    if d > stop:
+        dx, dy = (dest[0] - p.x) / d, (dest[1] - p.y) / d
+    ai["stuck_t"] += DT
+    if ai["stuck_t"] >= 0.6:
+        if (dx or dy) and math.hypot(p.x - ai["lx"], p.y - ai["ly"]) < 20:
+            s = random.choice((-1, 1)); ai["det"] = 0.8; ai["dd"] = (-dy * s, dx * s)
+        ai["lx"], ai["ly"], ai["stuck_t"] = p.x, p.y, 0.0
+    if ai["det"] > 0:
+        ai["det"] -= DT; dx, dy = ai["dd"]
+    p.dx, p.dy = dx, dy
+    p.w = 0; p.sh = False
+    if shoot and p.carry < 0:
+        p.a = math.atan2(shoot[1] - p.y, shoot[0] - p.x) + random.uniform(-0.13, 0.13)
+        p.fire = random.random() < 0.8
+    else:
+        p.fire = False
+        if dx or dy:
+            p.a = math.atan2(dy, dx)
 
 
 # ---------- vật lý ----------
@@ -722,7 +874,9 @@ def step(r, live):
             continue
         if not live:
             continue
-        if time.time() - p.tpos > 0.5:  # client không gửi vị trí (mất kết nối/đời cũ) thì máy chủ tự mô phỏng
+        if p.bot:
+            bot_ai(r, p)
+        if p.bot or time.time() - p.tpos > 0.5:  # client không gửi vị trí (mất kết nối/đời cũ) thì máy chủ tự mô phỏng
             sp = SPEED * (1 + 0.04 * (p.lv - 1)) * (CARRY_K if p.carry >= 0 else 1) * (RIVER_K if in_river(p.x, p.y) else 1) * (SHIELD_K if shielding(p) else 1)
             nx = p.x + p.dx * sp * DT
             if not hit_wall(nx, p.y, PR): p.x = nx
@@ -831,7 +985,7 @@ def send_state(r):
     """Mỗi đội nhận một bản trạng thái riêng: địch đứng trong bụi cỏ (không có đồng đội ở gần) sẽ bị ẩn."""
     evs, r.ev = r.ev, []
     for t in (0, 1):
-        team = [p for p in r.players.values() if p.team == t]
+        team = [p for p in r.players.values() if p.team == t and not p.bot]
         if not team:
             continue
         seers = [p for p in team if p.down <= 0]
@@ -919,11 +1073,17 @@ def play_round(r, i):
 def run_match(r):
     load_questions()
     r.total = [0, 0]
+    with LOCK:
+        remove_bots(r)
+        if r.pve:
+            add_bots(r)
+        sio.emit("room", info(r), to=r.code)
     for i in range(r.rounds):
         if not play_round(r, i):
             break
     with LOCK:
         r.state = "lobby"; r.phase = "lobby"; r.flags = []; r.bullets = []; r.paused = False
+        remove_bots(r)
         for p in r.players.values():
             p.reset()
     if not r.dead:
