@@ -80,6 +80,8 @@ BSPEED, COOL = 600.0, 0.32
 # -> chọn BLIFE sao cho tầm đó đúng bằng LASER_RANGE: người chơi không thể bắn trúng thần từ ngoài tầm laze.
 BLIFE = (LASER_RANGE - (14 + 3) - (GUARD_R + 3)) / BSPEED
 SWORD_R, SWORD_COOL, SWORD_T = 58.0, 0.55, 0.25  # tầm / hồi chiêu / thời gian vung kiếm
+SWORD_DMG = 2                  # kiếm: 2 sát thương / nhát (súng bóng nước: 1 / viên)
+SHIELD_ARC, SHIELD_K = 1.15, 0.6  # khiên đỡ được trong ±1.15 rad (~66°) phía trước; đi chậm còn 60% khi giơ khiên
 PLANT_S, STEAL_S, SEE_R = 2.0, 2.5, 170.0
 
 # ---------- bản đồ: đối xứng tâm (xoay 180 độ) ----------
@@ -105,7 +107,7 @@ LANES = [[(7, 49), (4, 42), (4, 5), (40, 4), (73, 7)], [(73, 7), (76, 14), (76, 
 LANES = [[(x * T, y * T) for x, y in l] for l in LANES]
 RIVER_K0, RIVER_HALF = 0.7, 3 * T
 FLAG_SETS = {2: [(33, 35), (47, 21)], 3: [(33, 35), (47, 21), (40, 28)], 4: [(33, 35), (47, 21), (24, 24), (56, 32)]}
-MAPINFO = {"W": W, "H": H, "walls": WALLS, "bushes": BUSHES, "bases": BASES, "baseR": BASE_R, "lanes": LANES,
+MAPINFO = {"W": W, "H": H, "aimLen": round(BSPEED * BLIFE + PR + 3), "walls": WALLS, "bushes": BUSHES, "bases": BASES, "baseR": BASE_R, "lanes": LANES,
            "river": {"k": RIVER_K0, "half": RIVER_HALF}}
 
 app = Flask(__name__)
@@ -203,7 +205,7 @@ class P:
     def reset(s):
         s.x = s.y = 0.0; s.a = 0.0; s.hp = HP; s.down = 0.0; s.cool = 0.0
         s.lv = 1; s.exp = 0; s.mhp = HP
-        s.sw = 0.0; s.dx = s.dy = 0.0; s.fire = False; s.carry = -1; s.prog = 0.0; s.pf = -1
+        s.sw = 0.0; s.dx = s.dy = 0.0; s.fire = False; s.sh = False; s.carry = -1; s.prog = 0.0; s.pf = -1
 
 
 class Room:
@@ -430,6 +432,7 @@ def on_inp(d):
         p.dx, p.dy, p.a, p.fire = dx, dy, a, bool(d.get("f"))
         p.g = 1 if d.get("g") == 1 else 0
         p.w = 1 if d.get("w") == 1 else 0
+        p.sh = bool(d.get("sh")) and p.w == 1  # giữ khiên (chỉ khi cầm kiếm)
         # Client tự dự đoán vị trí (không giật khi ping cao); máy chủ chỉ kiểm tra có hợp lệ không
         if "x" in d and d.get("ep") == p.ep and p.down <= 0 and r.phase == "play" and not r.paused:
             nx, ny, now = float(d["x"]), float(d["y"]), time.time()
@@ -537,8 +540,23 @@ def on_kill(r, victim, team):
         drop_orb(r, victim.x, victim.y, 1)
 
 
-def hit_mon(r, mo, team, by=None):
-    mo["hp"] -= 1
+def shielding(p):
+    return p.sh and p.w == 1 and p.carry < 0 and p.down <= 0
+
+
+def blocked(r, q, sx, sy):
+    """Đòn đánh từ (sx, sy) vào q bị khiên chặn nếu q đang giơ khiên và nguồn nằm trong cung phía trước."""
+    if not shielding(q):
+        return False
+    ang = abs((math.atan2(sy - q.y, sx - q.x) - q.a + math.pi) % (2 * math.pi) - math.pi)
+    if ang > SHIELD_ARC:
+        return False
+    r.ev.append(["k", round(q.x), round(q.y), q.team])
+    return True
+
+
+def hit_mon(r, mo, team, by=None, dmg=1):
+    mo["hp"] -= dmg
     r.ev.append(["h", round(mo["x"]), round(mo["y"]), team])
     if mo["hp"] > 0:
         if mo["t"] == 3 and by is not None:
@@ -581,6 +599,8 @@ def laser_step(r, mo):
             for p in r.players.values():
                 dx, dy = p.x - mo["x"], p.y - mo["y"]
                 if p.down <= 0 and 0 <= dx * ca + dy * sa <= L and abs(-dx * sa + dy * ca) < PR + 7:
+                    if blocked(r, p, mo["x"], mo["y"]):
+                        continue
                     p.hp -= LASER_DMG
                     r.ev.append(["h", round(p.x), round(p.y), p.team])
                     if p.hp <= 0:
@@ -663,7 +683,10 @@ def mon_step(r):
                 ny = mo["y"] + math.sin(a) * sp
                 if not hit_wall(mo["x"], ny, mo["r"]): mo["y"] = ny
         if tg and bd < PR + mo["r"] + 2 and mo["cd"] <= 0:
-            tg.hp -= c["dmg"]; mo["cd"] = 1.1
+            mo["cd"] = 1.1
+            if blocked(r, tg, mo["x"], mo["y"]):
+                continue
+            tg.hp -= c["dmg"]
             r.ev.append(["h", round(tg.x), round(tg.y), tg.team])
             if tg.hp <= 0:
                 tg.down = DOWN_S; drop_flag(r, tg)
@@ -697,21 +720,21 @@ def step(r, live):
         if not live:
             continue
         if time.time() - p.tpos > 0.5:  # client không gửi vị trí (mất kết nối/đời cũ) thì máy chủ tự mô phỏng
-            sp = SPEED * (1 + 0.04 * (p.lv - 1)) * (CARRY_K if p.carry >= 0 else 1) * (RIVER_K if in_river(p.x, p.y) else 1)
+            sp = SPEED * (1 + 0.04 * (p.lv - 1)) * (CARRY_K if p.carry >= 0 else 1) * (RIVER_K if in_river(p.x, p.y) else 1) * (SHIELD_K if shielding(p) else 1)
             nx = p.x + p.dx * sp * DT
             if not hit_wall(nx, p.y, PR): p.x = nx
             ny = p.y + p.dy * sp * DT
             if not hit_wall(p.x, ny, PR): p.y = ny
         p.cool -= DT
         p.sw -= DT
-        if p.fire and p.carry < 0 and p.cool <= 0 and p.w == 1:
+        if p.fire and p.carry < 0 and p.cool <= 0 and p.w == 1 and not shielding(p):
             p.cool, p.sw = SWORD_COOL, SWORD_T
             r.ev.append(["m", round(p.x), round(p.y), p.team])
             for mo in r.mons:
                 if mo["alive"] and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < SWORD_R + mo["r"] + 4 * (p.lv - 1):
                     ang = abs((math.atan2(mo["y"] - p.y, mo["x"] - p.x) - p.a + math.pi) % (2 * math.pi) - math.pi)
                     if ang < 1.05 or math.hypot(mo["x"] - p.x, mo["y"] - p.y) < PR + mo["r"] + 6:
-                        hit_mon(r, mo, p.team, p)
+                        hit_mon(r, mo, p.team, p, SWORD_DMG)
             for q in r.players.values():
                 if q.team == p.team or q.down > 0:
                     continue
@@ -720,13 +743,15 @@ def step(r, live):
                     continue
                 ang = abs((math.atan2(q.y - p.y, q.x - p.x) - p.a + math.pi) % (2 * math.pi) - math.pi)
                 if dd < PR + 6 or ang < 1.05:
-                    q.hp -= 1
+                    if blocked(r, q, p.x, p.y):
+                        continue
+                    q.hp -= SWORD_DMG
                     r.ev.append(["h", round(q.x), round(q.y), q.team])
                     if q.hp <= 0:
                         q.down = DOWN_S; drop_flag(r, q)
                         r.ev.append(["d", round(q.x), round(q.y), q.team])
                         on_kill(r, q, p.team)
-        elif p.fire and p.carry < 0 and p.cool <= 0:
+        elif p.fire and p.carry < 0 and p.cool <= 0 and p.w == 0:
             p.cool = COOL
             r.bullets.append({"x": p.x + math.cos(p.a) * (PR + 3), "y": p.y + math.sin(p.a) * (PR + 3),
                               "vx": math.cos(p.a) * BSPEED, "vy": math.sin(p.a) * BSPEED, "t": p.team, "life": BLIFE, "o": p})
@@ -783,6 +808,8 @@ def step(r, live):
                 hit_mon(r, mh, b["t"], b.get("o"))
                 continue
         if hit:
+            if blocked(r, hit, b["x"], b["y"]):
+                continue  # khiên chặn: đạn biến mất
             hit.hp -= 1
             r.ev.append(["h", round(hit.x), round(hit.y), hit.team])
             if hit.hp <= 0:
@@ -808,7 +835,7 @@ def send_state(r):
                or any(math.hypot(p.x - s.x, p.y - s.y) < SEE_R for s in seers)]
         ids = {p.pid for p in vis}
         st = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused,
-              "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp] for p in vis],
+              "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p))] for p in vis],
               "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] if (not f["c"] or f["c"].pid in ids)
                     else [-1, -1, f["c"].pid, -1] for f in r.flags],
               "b": [[round(b["x"]), round(b["y"]), b["t"]] for b in r.bullets], "ev": evs, "kp": r.kp,
@@ -820,7 +847,7 @@ def send_state(r):
     if r.specs:
         everyone = list(r.players.values())
         full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1,
-                "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp] for p in everyone],
+                "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p))] for p in everyone],
                 "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] for f in r.flags],
                 "b": [[round(b["x"]), round(b["y"]), b["t"]] for b in r.bullets], "ev": evs, "kp": r.kp,
                 "mo": [[mo["id"], mo["t"], round(mo["x"]), round(mo["y"]), mo["hp"], round(mo["ch"], 2), round(mo["la"], 2), round(mo["fl"], 2), round(mo["L"])]
