@@ -107,7 +107,8 @@ LANES = [[(7, 49), (4, 42), (4, 5), (40, 4), (73, 7)], [(73, 7), (76, 14), (76, 
 LANES = [[(x * T, y * T) for x, y in l] for l in LANES]
 RIVER_K0, RIVER_HALF = 0.7, 3 * T
 FLAG_SETS = {2: [(33, 35), (47, 21)], 3: [(33, 35), (47, 21), (40, 28)], 4: [(33, 35), (47, 21), (24, 24), (56, 32)]}
-MAPINFO = {"W": W, "H": H, "aimLen": round(BSPEED * BLIFE + PR + 3), "walls": WALLS, "bushes": BUSHES, "bases": BASES, "baseR": BASE_R, "lanes": LANES,
+MAPINFO = {"W": W, "H": H, "aimLen": round(BSPEED * BLIFE + PR + 3),
+           "bSpeed": BSPEED, "bLife": BLIFE, "cool": COOL, "swCool": SWORD_COOL, "swT": SWORD_T, "walls": WALLS, "bushes": BUSHES, "bases": BASES, "baseR": BASE_R, "lanes": LANES,
            "river": {"k": RIVER_K0, "half": RIVER_HALF}}
 
 app = Flask(__name__)
@@ -205,7 +206,7 @@ class P:
     def reset(s):
         s.x = s.y = 0.0; s.a = 0.0; s.hp = HP; s.down = 0.0; s.cool = 0.0
         s.lv = 1; s.exp = 0; s.mhp = HP
-        s.sw = 0.0; s.dx = s.dy = 0.0; s.fire = False; s.sh = False; s.carry = -1; s.prog = 0.0; s.pf = -1
+        s.sw = 0.0; s.dx = s.dy = 0.0; s.fire = False; s.fl = False; s.sh = False; s.carry = -1; s.prog = 0.0; s.pf = -1
 
 
 class Room:
@@ -430,6 +431,8 @@ def on_inp(d):
         if n > 1:
             dx, dy = dx / n, dy / n
         p.dx, p.dy, p.a, p.fire = dx, dy, a, bool(d.get("f"))
+        if p.fire and r.phase == "play" and p.down <= 0:
+            p.fl = True  # chốt cú bấm ngắn: nhấn+thả giữa 2 tick vẫn tính 1 phát (khớp với đạn client đã hiện)
         p.g = 1 if d.get("g") == 1 else 0
         p.w = 1 if d.get("w") == 1 else 0
         p.sh = bool(d.get("sh")) and p.w == 1  # giữ khiên (chỉ khi cầm kiếm)
@@ -713,7 +716,7 @@ def orb_step(r):
 def step(r, live):
     for p in r.players.values():
         if p.down > 0:
-            p.down -= DT
+            p.down -= DT; p.fl = False
             if p.down <= 0:
                 p.hp = p.mhp; p.down = 0; spawn(r, p)
             continue
@@ -727,9 +730,10 @@ def step(r, live):
             if not hit_wall(p.x, ny, PR): p.y = ny
         p.cool -= DT
         p.sw -= DT
-        if p.fire and p.carry < 0 and p.cool <= 0 and p.w == 1 and not shielding(p):
+        fire = p.fire or p.fl; p.fl = False
+        if fire and p.carry < 0 and p.cool <= 0 and p.w == 1 and not shielding(p):
             p.cool, p.sw = SWORD_COOL, SWORD_T
-            r.ev.append(["m", round(p.x), round(p.y), p.team])
+            r.ev.append(["m", round(p.x), round(p.y), p.team, p.pid])
             for mo in r.mons:
                 if mo["alive"] and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < SWORD_R + mo["r"] + 4 * (p.lv - 1):
                     ang = abs((math.atan2(mo["y"] - p.y, mo["x"] - p.x) - p.a + math.pi) % (2 * math.pi) - math.pi)
@@ -751,11 +755,11 @@ def step(r, live):
                         q.down = DOWN_S; drop_flag(r, q)
                         r.ev.append(["d", round(q.x), round(q.y), q.team])
                         on_kill(r, q, p.team)
-        elif p.fire and p.carry < 0 and p.cool <= 0 and p.w == 0:
+        elif fire and p.carry < 0 and p.cool <= 0 and p.w == 0:
             p.cool = COOL
             r.bullets.append({"x": p.x + math.cos(p.a) * (PR + 3), "y": p.y + math.sin(p.a) * (PR + 3),
                               "vx": math.cos(p.a) * BSPEED, "vy": math.sin(p.a) * BSPEED, "t": p.team, "life": BLIFE, "o": p})
-            r.ev.append(["s", round(p.x), round(p.y), p.team])
+            r.ev.append(["s", round(p.x), round(p.y), p.team, p.pid])
     if not live:
         return
     for p in r.players.values():
@@ -838,7 +842,7 @@ def send_state(r):
               "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p))] for p in vis],
               "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] if (not f["c"] or f["c"].pid in ids)
                     else [-1, -1, f["c"].pid, -1] for f in r.flags],
-              "b": [[round(b["x"]), round(b["y"]), b["t"]] for b in r.bullets], "ev": evs, "kp": r.kp,
+              "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid] for b in r.bullets], "ev": evs, "kp": r.kp,
               "mo": [[mo["id"], mo["t"], round(mo["x"]), round(mo["y"]), mo["hp"], round(mo["ch"], 2), round(mo["la"], 2), round(mo["fl"], 2), round(mo["L"])]
                      for mo in r.mons if mo["alive"]],
               "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs]}
@@ -849,7 +853,7 @@ def send_state(r):
         full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1,
                 "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p))] for p in everyone],
                 "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] for f in r.flags],
-                "b": [[round(b["x"]), round(b["y"]), b["t"]] for b in r.bullets], "ev": evs, "kp": r.kp,
+                "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid] for b in r.bullets], "ev": evs, "kp": r.kp,
                 "mo": [[mo["id"], mo["t"], round(mo["x"]), round(mo["y"]), mo["hp"], round(mo["ch"], 2), round(mo["la"], 2), round(mo["fl"], 2), round(mo["L"])]
                        for mo in r.mons if mo["alive"]],
                 "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs]}

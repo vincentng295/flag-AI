@@ -138,13 +138,14 @@ function init(){
   el.querySelectorAll('button').forEach(b=>b.onclick=()=>{let pw='';if(b.dataset.p==='1'){pw=prompt('Nhập mật khẩu phòng:');if(pw===null)return}sock.emit('join',{code:b.dataset.c,pw,nick:nick()})})});
  sock.on('room',r=>{room=r;if(!inGame){show('roomscr');drawRoom()}else updPause()});
  sock.on('left',()=>{room=null;leaveGameUI();show('lobby')});
- sock.on('rd',d=>{inGame=true;M=d.map;names={};d.players.forEach(p=>names[p.pid]=p);S=null;lastTick=-1;lastPh='';$('#ov').classList.add('hide');$('#pz').classList.add('hide');
+ sock.on('rd',d=>{inGame=true;M=d.map;names={};d.players.forEach(p=>names[p.pid]=p);S=null;lastTick=-1;lastPh='';LB.length=0;lCool=0;lSw=0;aInit=false;$('#ov').classList.add('hide');$('#pz').classList.add('hide');
   if(!TER||TER.W!==M.W)buildWorld();show('game');fsEnter();resize();AU.bpm=140;musicStart();duck(false);
   $('#hr').textContent=`Round ${d.i+1}/${d.n}`;
   $('#q').innerHTML=`<div>${esc(d.q.question)}</div>`+d.q.options.map((o,i)=>`<div class="o"><b style="background:${FC[i]}">${L[i]}</b><span>${esc(o)}</span></div>`).join('');
   banner(`ROUND ${d.i+1}`);sfx('go')});
  sock.on('st',s=>{S=s;for(const p of s.p){const d=disp[p[0]]||(disp[p[0]]={x:p[2],y:p[3]});d.tx=p[2];d.ty=p[3]}
-  for(const e of s.ev||[])sfx(e[0],e[1],e[2]);
+  for(const e of s.ev||[]){if((e[0]==='s'||e[0]==='m')&&e[4]===pid&&!isSpec())continue;sfx(e[0],e[1],e[2])}
+  if(!aInit&&!isSpec()){const m=s.p.find(q=>q[0]===pid);if(m){inp.a=m[4];aInit=true}}
   const t=Math.max(0,Math.ceil(s.tl));$('#ht').textContent=s.ph==='read'?'📖 Đọc đề '+t:`${Math.floor(t/60)}:${String(t%60).padStart(2,'0')}`;
   $('#hs').innerHTML=`<span style="color:${TC[0]}">🔵 ${s.tot[0]}${s.kp[0]?` <small>+${s.kp[0]}</small>`:''}</span> <span style="color:${TC[1]}">🔴 ${s.tot[1]}${s.kp[1]?` <small>+${s.kp[1]}</small>`:''}</span>`;
   if(s.ph!==lastPh){if(s.ph==='play'&&lastPh==='read'){banner('CƯỚP CỜ!');sfx('go')}lastPh=s.ph}
@@ -189,7 +190,7 @@ $('#bfs').onclick=$('#fs0').onclick=fsToggle;$('#bmu').onclick=()=>{auInit();set
 addEventListener('keydown',e=>{if(!inGame)return;if(e.code==='KeyP'||e.code==='Escape')togglePause();if(e.code==='KeyM')setMute(!AU.mute);if(e.code==='KeyF')fsToggle()});
 
 /* ================= ĐIỀU KHIỂN ================= */
-let spF=0;let myEp=-1;function hitW(x,y){const r=14;if(x<r||y<r||x>M.W-r||y>M.H-r)return true;for(const[wx,wy,ww,wh]of M.walls){const cx=Math.min(Math.max(x,wx),wx+ww),cy=Math.min(Math.max(y,wy),wy+wh);if((x-cx)**2+(y-cy)**2<r*r)return true}return false}
+let spF=0;let myEp=-1;function hitW(x,y,r=14){if(x<r||y<r||x>M.W-r||y>M.H-r)return true;for(const[wx,wy,ww,wh]of M.walls){const cx=Math.min(Math.max(x,wx),wx+ww),cy=Math.min(Math.max(y,wy),wy+wh);if((x-cx)**2+(y-cy)**2<r*r)return true}return false}
 function predict(d,dt,carry,lv){let dx=inp.dx,dy=inp.dy;const n=Math.hypot(dx,dy);if(n>1){dx/=n;dy/=n}const k=M.river.k,rv=Math.abs(k*d.x-d.y)/Math.hypot(k,1)<M.river.half,s=200*(1+.04*((lv||1)-1))*(carry?.7:1)*(rv?.75:1)*(inp.sh&&!carry?.6:1);
  let nx=d.x+dx*s*dt;if(!hitW(nx,d.y))d.x=nx;let ny=d.y+dy*s*dt;if(!hitW(d.x,ny))d.y=ny}
 let ctlOn=false;let MYG=+(localStorage.getItem('g')||0),MYW=0,shHeld=false;const keys={};let mouse={x:0,y:0,down:false,on:false,sh:false};const mv={id:null},am={id:null};let inp={dx:0,dy:0,a:0,f:false},lastSend=0,lastKey='';
@@ -211,6 +212,25 @@ function readInput(me){
  else if((dx||dy)&&mv.id===null&&!mouse.on)a=Math.atan2(dy,dx);
  const sh=MYW===1&&!!(shHeld||keys.KeyE||keys.ShiftLeft||keys.ShiftRight||mouse.sh);if(sh)f=false;inp={dx,dy,a,f,sh};const k=[dx.toFixed(1),dy.toFixed(1),a.toFixed(1),f,MYG,MYW,sh].join(),now=performance.now();
  if(sock&&inGame&&(k!==lastKey&&now-lastSend>33||now-lastSend>250||((dx||dy)&&now-lastSend>50))){sock.emit('inp',{dx,dy,a,f,sh,g:MYG,w:MYW,ep:myEp,x:me?+me.x.toFixed(1):undefined,y:me?+me.y.toFixed(1):undefined});lastKey=k;lastSend=now}}
+
+/* ===== HÀNH ĐỘNG CỦA MÌNH: hiện NGAY trên máy (đạn, nhát chém, hướng nhìn, khiên), không chờ máy chủ.
+   Máy chủ vẫn là trọng tài sát thương/hạ gục; đạn của mình từ máy chủ được ẩn đi để khỏi vẽ đôi. ===== */
+let LB=[],lCool=0,lSw=0,aInit=false;
+function localAct(dt,me){
+ lCool-=dt;lSw-=dt;
+ const pp=S&&!isSpec()?S.p.find(q=>q[0]===pid):null;
+ if(!pp||!me||S.ph!=='play'||S.pz||pp[6]>0){LB.length=0;lSw=0;return}
+ const sp=M.bSpeed||600;
+ for(let i=LB.length-1;i>=0;i--){const b=LB[i],n=Math.ceil(sp*dt/12)||1;let dead=false;
+  for(let k=0;k<n&&!dead;k++){b.x+=b.vx*dt/n;b.y+=b.vy*dt/n;
+   if(hitW(b.x,b.y,2)){dead=true;break}
+   for(const q of S.p)if(q[1]!==pp[1]&&q[6]<=0){const d=disp[q[0]];if(d&&Math.hypot(d.x-b.x,d.y-b.y)<17){dead=true;break}}
+   if(!dead)for(const m of S.mo||[]){const d=mdisp[m[0]];if(d&&Math.hypot(d.x-b.x,d.y-b.y)<MR[m[1]]+3){dead=true;break}}}
+  b.l-=dt;if(dead||b.l<=0)LB.splice(i,1)}
+ if(inp.f&&pp[7]<0&&lCool<=0){
+  if(MYW===1){lCool=(M.swCool||.55)+.07;lSw=M.swT||.25;sfx('m',me.x,me.y)}
+  else{lCool=(M.cool||.32)+.05;const a=inp.a,c=Math.cos(a),s=Math.sin(a);LB.push({x:me.x+c*17,y:me.y+s*17,vx:c*sp,vy:s*sp,l:M.bLife||.7});sfx('s',me.x,me.y)}}
+}
 
 /* ================= ĐỊA HÌNH (vẽ 1 lần) ================= */
 function rng(s){return()=>(s=(s*1664525+1013904223)>>>0)/4294967296}
@@ -263,15 +283,16 @@ function frame(t){requestAnimationFrame(frame);const dt=Math.min(.1,(t-lastT)/10
  sc=(isSpec()&&!spF)?Math.min(cw/M.W,ch/M.H):Math.max(.3,Math.min(cw/1100,ch/700));const vw=cw/sc,vh=ch/sc;
  if(me){camx+=(me.x-camx)*Math.min(1,dt*10)||0;camy+=(me.y-camy)*Math.min(1,dt*10)||0}else if(!camx){camx=M.W/2;camy=M.H/2}
  camx=vw>=M.W?M.W/2:Math.max(vw/2-60,Math.min(M.W-vw/2+60,camx));camy=vh>=M.H?M.H/2:Math.max(vh/2-60,Math.min(M.H-vh/2+60,camy));
- if(isSpec()&&!spF){camx=M.W/2;camy=M.H/2}readInput(me);ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#17355b';ctx.fillRect(0,0,cw,ch);
+ if(isSpec()&&!spF){camx=M.W/2;camy=M.H/2}readInput(me);localAct(dt,me);ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#17355b';ctx.fillRect(0,0,cw,ch);
  ctx.save();ctx.translate(cw/2-camx*sc,ch/2-camy*sc);ctx.scale(sc,sc);ctx.drawImage(TER,0,0);
  const fl=S.f;
  fl.forEach((f,i)=>{if(f[0]>=0&&f[2]===0){if(f[3]>=0){ctx.strokeStyle=TC[f[3]];ctx.lineWidth=3;ctx.beginPath();ctx.arc(f[0],f[1],17,0,7);ctx.stroke()}ctx.fillStyle='rgba(0,0,0,.25)';ctx.beginPath();ctx.ellipse(f[0],f[1]+4,12,5,0,0,7);ctx.fill();flagIcon(f[0],f[1],i,1)}});
- for(const b of S.b){ctx.fillStyle=TC[b[2]];ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(b[0],b[1],5,0,7);ctx.fill();ctx.stroke()}
+ for(const b of S.b){if(b[3]===pid&&!isSpec())continue;ctx.fillStyle=TC[b[2]];ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(b[0],b[1],5,0,7);ctx.fill();ctx.stroke()}
+ for(const b of LB){ctx.fillStyle=TC[myTeam()];ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(b.x,b.y,5,0,7);ctx.fill();ctx.stroke()}
  drawExtras(dt);
  for(const p of S.p){const d=disp[p[0]],dn=p[6]>0,nm=names[p[0]]?names[p[0]].nick:'';
   ctx.fillStyle='rgba(0,0,0,.28)';ctx.beginPath();ctx.ellipse(d.x,d.y+10,14,7,0,0,7);ctx.fill();ctx.globalAlpha=dn?.45:1;
-  drawChar(ctx,d.x,d.y,p[4],p[1],p[9]|0,p[10]|0,p[11]||0,dn,p[16]|0);
+  const im=p[0]===pid&&!isSpec();drawChar(ctx,d.x,d.y,im?inp.a:p[4],p[1],im?MYG:(p[9]|0),im?MYW:(p[10]|0),im?(lSw>0?lSw/(M.swT||.25):0):(p[11]||0),dn,im?((!dn&&MYW===1&&inp.sh&&p[7]<0)?1:0):(p[16]|0));
   ctx.globalAlpha=1;ctx.font='700 13px sans-serif';ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.lineWidth=3;ctx.strokeStyle='#fff';ctx.strokeText(dn?'❄ '+Math.ceil(p[6])+'s':nm,d.x,d.y+31);ctx.fillStyle=TC[p[1]];ctx.fillText(dn?'❄ '+Math.ceil(p[6])+'s':nm,d.x,d.y+31);
   if(!dn)for(let h=0;h<p[15];h++){ctx.fillStyle=h<p[5]?'#ff3d5a':'#fff';ctx.strokeStyle='#14306b';ctx.lineWidth=1.5;ctx.fillRect(d.x-p[15]*5.5+h*11,d.y-27,10,5);ctx.strokeRect(d.x-p[15]*5.5+h*11,d.y-27,10,5)}
   if(p[7]>=0)flagIcon(d.x+10,d.y-14,p[7],1);
