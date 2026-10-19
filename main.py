@@ -73,7 +73,12 @@ MAX_SPECS = env_num("MAX_SPECTATORS", 30)
 T = 32; TW, TH = 80, 56; W, H = TW * T, TH * T     # bản đồ 80x56 ô
 PR = 14; HZ = 20; DT = 1.0 / HZ
 SPEED, CARRY_K, RIVER_K = 200.0, 0.7, 0.75
-BSPEED, BLIFE, COOL = 600.0, 0.9, 0.32
+LASER_RANGE = 480.0                      # tầm ngắm/bắn của thần giữ cờ
+GUARD_R, GUARD_SP = 22, 120.0            # bán kính, tốc độ thần giữ cờ (chậm hơn người chơi 200)
+BSPEED, COOL = 600.0, 0.32
+# Tầm bong bóng hiệu dụng lên thần giữ cờ = đạn bay + điểm xuất phát (PR+3) + bán kính trúng (GUARD_R+3)
+# -> chọn BLIFE sao cho tầm đó đúng bằng LASER_RANGE: người chơi không thể bắn trúng thần từ ngoài tầm laze.
+BLIFE = (LASER_RANGE - (14 + 3) - (GUARD_R + 3)) / BSPEED
 SWORD_R, SWORD_COOL, SWORD_T = 58.0, 0.55, 0.25  # tầm / hồi chiêu / thời gian vung kiếm
 PLANT_S, STEAL_S, SEE_R = 2.0, 2.5, 170.0
 
@@ -477,7 +482,7 @@ def take(r, p, k, f):
 MON = {0: dict(hp=3, sp=70, r=14, dmg=1, pts=10, exp=(1, 2), heal=0.12, rt=25),    # slime
        1: dict(hp=2, sp=120, r=12, dmg=1, pts=15, exp=(1, 3), heal=0.12, rt=25),   # dơi
        2: dict(hp=14, sp=45, r=26, dmg=2, pts=60, exp=(5, 8), heal=1.0, rt=45),    # golem (trùm giữa bản đồ)
-       3: dict(hp=25, sp=0, r=22, dmg=2, pts=80, exp=(6, 9), heal=1.0, rt=45)}     # thần giữ cờ: đứng yên, bắn laze
+       3: dict(hp=25, sp=GUARD_SP, r=GUARD_R, dmg=2, pts=80, exp=(6, 9), heal=1.0, rt=45)}  # thần giữ cờ: đi dạo quanh cờ, bắn laze, bị bắn thì đuổi
 
 
 def make_mons(r):
@@ -488,7 +493,8 @@ def make_mons(r):
     def add(t, x, y):
         c = MON[t]
         r.mons.append({"id": len(r.mons), "t": t, "x": x, "y": y, "hx": x, "hy": y, "hp": c["hp"], "mhp": c["hp"],
-                       "r": c["r"], "cd": 0.0, "alive": True, "rt": 0.0, "ch": 0.0, "fl": 0.0, "lcd": 2.0, "la": 0.0, "L": 0.0})
+                       "r": c["r"], "cd": 0.0, "alive": True, "rt": 0.0, "ch": 0.0, "fl": 0.0, "lcd": 2.0, "la": 0.0, "L": 0.0,
+                       "ax": x, "ay": y, "ag": None, "wt": 0.0, "ws": 0.0, "wx": x, "wy": y})
     for t in (0, 0, 1, 1):
         for _ in range(80):
             x, y = random.uniform(0.15, 0.85) * W, random.uniform(0.15, 0.85) * H
@@ -502,7 +508,9 @@ def make_mons(r):
         for _ in range(40):
             a = random.uniform(0, 6.283); x, y = f["x"] + math.cos(a) * 85, f["y"] + math.sin(a) * 85
             if not hit_wall(x, y, 28):
-                add(3, x, y); break
+                add(3, x, y)
+                r.mons[-1]["ax"], r.mons[-1]["ay"] = f["x"], f["y"]  # mốc đi dạo = vị trí lá cờ
+                break
 
 
 def drop_orb(r, x, y, k, v=0):
@@ -529,10 +537,12 @@ def on_kill(r, victim, team):
         drop_orb(r, victim.x, victim.y, 1)
 
 
-def hit_mon(r, mo, team):
+def hit_mon(r, mo, team, by=None):
     mo["hp"] -= 1
     r.ev.append(["h", round(mo["x"]), round(mo["y"]), team])
     if mo["hp"] > 0:
+        if mo["t"] == 3 and by is not None:
+            mo["ag"] = by  # bị đánh -> đuổi theo người đánh cho tới khi họ chạy thoát
         return
     c = MON[mo["t"]]
     mo["alive"] = False; mo["rt"] = c["rt"]
@@ -544,7 +554,8 @@ def hit_mon(r, mo, team):
     r.ev.append(["d", round(mo["x"]), round(mo["y"]), team])
 
 
-LASER_CHARGE, LASER_CD, LASER_DMG, LASER_RANGE = 0.9, 2.6, 2, 480.0
+LASER_CHARGE, LASER_CD, LASER_DMG = 0.9, 2.6, 2
+GUARD_WANDER, GUARD_LOSE, GUARD_LEASH = 120.0, 560.0, 650.0  # bán kính đi dạo / khoảng cách "chạy thoát" / dây xích tối đa quanh cờ
 
 
 def laser_step(r, mo):
@@ -578,29 +589,79 @@ def laser_step(r, mo):
     mo["ch"] = ch
 
 
+def mon_move(mo, tx, ty, sp, stop=4.0):
+    d = math.hypot(tx - mo["x"], ty - mo["y"])
+    if d <= stop:
+        return
+    a = math.atan2(ty - mo["y"], tx - mo["x"]); st = min(sp * DT, d)
+    nx = mo["x"] + math.cos(a) * st
+    if not hit_wall(nx, mo["y"], mo["r"]): mo["x"] = nx
+    ny = mo["y"] + math.sin(a) * st
+    if not hit_wall(mo["x"], ny, mo["r"]): mo["y"] = ny
+
+
+def guard_step(r, mo, c):
+    """Thần giữ cờ: bị bắn/chém thì đuổi người đó tới khi họ thoát (xa > GUARD_LOSE, ngã, hoặc kéo quá xa cờ);
+    bình thường thì đi dạo ngẫu nhiên quanh lá cờ. Đứng yên khi đang nạp laze. Trả về (người gần nhất, khoảng cách) để đánh cận chiến."""
+    tg = mo["ag"]
+    if tg is not None:
+        if (tg not in r.players.values() or tg.down > 0
+                or math.hypot(tg.x - mo["x"], tg.y - mo["y"]) > GUARD_LOSE
+                or math.hypot(tg.x - mo["ax"], tg.y - mo["ay"]) > GUARD_LEASH):
+            mo["ag"] = tg = None  # người chơi đã thoát -> quay về đi dạo
+    if mo["ch"] <= 0:  # đang nạp laze thì đứng yên để ngắm
+        if tg is not None:
+            mon_move(mo, tg.x, tg.y, c["sp"], stop=PR + mo["r"] - 2)
+        elif math.hypot(mo["ax"] - mo["x"], mo["ay"] - mo["y"]) > GUARD_WANDER * 1.5:
+            mon_move(mo, mo["ax"], mo["ay"], c["sp"] * 0.8)  # đi quá xa cờ (sau khi đuổi) -> về lại
+        elif mo["wt"] > 0:
+            mo["wt"] -= DT  # đang nghỉ
+        elif math.hypot(mo["wx"] - mo["x"], mo["wy"] - mo["y"]) < 8 or mo["ws"] > 4.0:
+            mo["wt"], mo["ws"] = random.uniform(1.0, 3.0), 0.0  # tới nơi (hoặc kẹt tường) -> nghỉ rồi chọn điểm mới
+            for _ in range(12):
+                a, d = random.uniform(0, 6.283), GUARD_WANDER * math.sqrt(random.random())
+                x, y = mo["ax"] + math.cos(a) * d, mo["ay"] + math.sin(a) * d
+                if not hit_wall(x, y, mo["r"] + 4):
+                    mo["wx"], mo["wy"] = x, y; break
+            else:
+                mo["wx"], mo["wy"] = mo["x"], mo["y"]
+        else:
+            mo["ws"] += DT
+            mon_move(mo, mo["wx"], mo["wy"], c["sp"] * 0.5)
+    near, bd = None, 1e9
+    for p in r.players.values():
+        d = math.hypot(p.x - mo["x"], p.y - mo["y"])
+        if p.down <= 0 and d < bd:
+            near, bd = p, d
+    return near, bd
+
+
 def mon_step(r):
     for mo in r.mons:
         if not mo["alive"]:
             mo["rt"] -= DT
             if mo["rt"] <= 0:
-                mo.update(alive=True, hp=mo["mhp"], x=mo["hx"], y=mo["hy"], ch=0.0, fl=0.0, lcd=2.0)
+                mo.update(alive=True, hp=mo["mhp"], x=mo["hx"], y=mo["hy"], ch=0.0, fl=0.0, lcd=2.0,
+                          ag=None, wt=0.0, ws=0.0, wx=mo["hx"], wy=mo["hy"])
             continue
         c = MON[mo["t"]]; mo["cd"] -= DT
         if mo["t"] == 3:
             laser_step(r, mo)
-        tg, bd = None, 300.0
-        for p in r.players.values():
-            d = math.hypot(p.x - mo["x"], p.y - mo["y"])
-            if p.down <= 0 and d < bd and math.hypot(p.x - mo["hx"], p.y - mo["hy"]) < 520:
-                tg, bd = p, d
-        tx, ty = (tg.x, tg.y) if tg else (mo["hx"], mo["hy"])
-        d = math.hypot(tx - mo["x"], ty - mo["y"])
-        if d > 6:
-            a = math.atan2(ty - mo["y"], tx - mo["x"]); sp = c["sp"] * (1.0 if tg else 0.8) * DT
-            nx = mo["x"] + math.cos(a) * sp
-            if not hit_wall(nx, mo["y"], mo["r"]): mo["x"] = nx
-            ny = mo["y"] + math.sin(a) * sp
-            if not hit_wall(mo["x"], ny, mo["r"]): mo["y"] = ny
+            tg, bd = guard_step(r, mo, c)
+        else:
+            tg, bd = None, 300.0
+            for p in r.players.values():
+                d = math.hypot(p.x - mo["x"], p.y - mo["y"])
+                if p.down <= 0 and d < bd and math.hypot(p.x - mo["hx"], p.y - mo["hy"]) < 520:
+                    tg, bd = p, d
+            tx, ty = (tg.x, tg.y) if tg else (mo["hx"], mo["hy"])
+            d = math.hypot(tx - mo["x"], ty - mo["y"])
+            if d > 6:
+                a = math.atan2(ty - mo["y"], tx - mo["x"]); sp = c["sp"] * (1.0 if tg else 0.8) * DT
+                nx = mo["x"] + math.cos(a) * sp
+                if not hit_wall(nx, mo["y"], mo["r"]): mo["x"] = nx
+                ny = mo["y"] + math.sin(a) * sp
+                if not hit_wall(mo["x"], ny, mo["r"]): mo["y"] = ny
         if tg and bd < PR + mo["r"] + 2 and mo["cd"] <= 0:
             tg.hp -= c["dmg"]; mo["cd"] = 1.1
             r.ev.append(["h", round(tg.x), round(tg.y), tg.team])
@@ -650,7 +711,7 @@ def step(r, live):
                 if mo["alive"] and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < SWORD_R + mo["r"] + 4 * (p.lv - 1):
                     ang = abs((math.atan2(mo["y"] - p.y, mo["x"] - p.x) - p.a + math.pi) % (2 * math.pi) - math.pi)
                     if ang < 1.05 or math.hypot(mo["x"] - p.x, mo["y"] - p.y) < PR + mo["r"] + 6:
-                        hit_mon(r, mo, p.team)
+                        hit_mon(r, mo, p.team, p)
             for q in r.players.values():
                 if q.team == p.team or q.down > 0:
                     continue
@@ -668,7 +729,7 @@ def step(r, live):
         elif p.fire and p.carry < 0 and p.cool <= 0:
             p.cool = COOL
             r.bullets.append({"x": p.x + math.cos(p.a) * (PR + 3), "y": p.y + math.sin(p.a) * (PR + 3),
-                              "vx": math.cos(p.a) * BSPEED, "vy": math.sin(p.a) * BSPEED, "t": p.team, "life": BLIFE})
+                              "vx": math.cos(p.a) * BSPEED, "vy": math.sin(p.a) * BSPEED, "t": p.team, "life": BLIFE, "o": p})
             r.ev.append(["s", round(p.x), round(p.y), p.team])
     if not live:
         return
@@ -719,7 +780,7 @@ def step(r, live):
         if not hit:
             mh = next((mo for mo in r.mons if mo["alive"] and math.hypot(mo["x"] - b["x"], mo["y"] - b["y"]) < mo["r"] + 3), None)
             if mh:
-                hit_mon(r, mh, b["t"])
+                hit_mon(r, mh, b["t"], b.get("o"))
                 continue
         if hit:
             hit.hp -= 1
