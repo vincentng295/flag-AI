@@ -85,6 +85,7 @@ HP, DOWN_S = env_num("HP", 3), env_num("DOWN_SECONDS", 5.0)
 PTS_OK, PTS_BAD = env_num("POINTS_CORRECT", 100), env_num("POINTS_WRONG", -50)
 PTS_KILL = env_num("POINTS_KILL", 20)  # điểm đội khi hạ một đối thủ
 MAXLV = 5
+REJOIN_S = env_num("REJOIN_SECONDS", 90)  # giữ chỗ cho người chơi mất kết nối giữa trận (giây); 0 = tắt
 MAX_SPECS = env_num("MAX_SPECTATORS", 30)
 T = 32; TW, TH = 80, 56; W, H = TW * T, TH * T     # bản đồ 80x56 ô
 PR = 14; HZ = 20; DT = 1.0 / HZ
@@ -131,6 +132,7 @@ app = Flask(__name__)
 sio = SocketIO(app, async_mode="threading", cors_allowed_origins=ORIGINS)
 LOCK = threading.RLock()
 ROOMS, SID_ROOM = {}, {}
+TOK = {}  # sid -> token trình duyệt (để nhận ra học sinh khi vào lại)
 
 
 def _strip_port(h):
@@ -218,6 +220,7 @@ class P:
         s.ep = 0; s.tpos = 0.0  # ep: số lần máy chủ ép vị trí; tpos: lúc nhận vị trí client gần nhất
         s.g = 0; s.w = 0  # g: 0 nam/1 nữ; w: 0 súng bóng nước/1 kiếm nhựa
         s.bot = False; s.ai = {}
+        s.tok = ""; s.away = False; s.awayAt = 0.0  # tok: token trình duyệt; away: đang mất kết nối, chờ vào lại
         s.reset()
 
     def reset(s):
@@ -282,6 +285,7 @@ def add_player(r, sid, nick, spec=False):
         p.team = 0 if (r.pve or c[0] <= c[1]) else 1
         r.players[sid] = p
     SID_ROOM[sid] = r
+    p.tok = TOK.get(sid, "")
     join_room(r.code, sid=sid)
     return p
 
@@ -317,13 +321,21 @@ def _connect(auth=None):
     cv = auth.get("version") if isinstance(auth, dict) else None
     if str(cv) != str(VERSION):
         raise RefuseConn({"code": "version", "server": VERSION_NAME, "version": VERSION})
+    TOK[request.sid] = clean(auth.get("tok"), 40)
     emit("rooms", rooms_list())
 
 
 @sio.on("disconnect")
 def _disc():
     with LOCK:
-        drop(request.sid)
+        sid = request.sid
+        r = SID_ROOM.get(sid); p = r.players.get(sid) if r else None
+        TOK.pop(sid, None)
+        if p and not p.bot and p.tok and r.state == "playing" and REJOIN_S > 0 and not r.dead:
+            # đang giữa trận: giữ chỗ REJOIN_S giây để học sinh vào lại (nhân vật đứng yên)
+            p.away = True; p.awayAt = time.time(); p.dx = p.dy = 0.0; p.fire = p.fl = p.sh = False
+            return
+        drop(sid)
 
 
 @sio.on("create")
@@ -369,6 +381,40 @@ def on_leave():
     with LOCK:
         drop(request.sid)
     emit("left")
+
+
+@sio.on("rejoin")
+def on_rejoin(d):
+    """Học sinh lỡ đóng trang / mất mạng giữa trận: nối lại đúng người chơi cũ (khớp token của trình duyệt)."""
+    d = d or {}; sid = request.sid
+    tok = TOK.get(sid, "")
+    with LOCK:
+        r = ROOMS.get(str(d.get("code")))
+        old = None
+        if r and tok and r.state == "playing" and sid not in r.players:
+            old = next((k for k, q in r.players.items()
+                        if not q.bot and q.tok and hmac.compare_digest(q.tok.encode(), tok.encode())), None)
+        if old is None:
+            return emit("rejoin_fail", "Không kết nối lại được: trận đã kết thúc hoặc đã hết thời gian chờ.")
+        p = r.players.pop(old)
+        SID_ROOM.pop(old, None)
+        try:
+            leave_room(r.code, sid=old)
+        except Exception:
+            pass
+        if not p.away:
+            sio.emit("kicked", to=old)  # kết nối cũ vẫn còn sống (tab khác): báo cho nó biết
+        p.sid, p.away = sid, False
+        p.dx = p.dy = 0.0; p.fire = p.fl = p.sh = False
+        p.ep += 1; p.tpos = time.time() + 2.0
+        r.players[sid] = p; SID_ROOM[sid] = r
+        join_room(r.code, sid=sid)
+        if r.host == old:
+            r.host = sid
+        emit("rejoined"); emit("me", {"pid": p.pid}); push(r)
+        if r.q:
+            emit("rd", {"i": r.round, "n": r.rounds, "q": {"question": r.q["question"], "options": r.q["options"]},
+                        "players": roster(r), "map": MAPINFO})
 
 
 @sio.on("seat")
@@ -1050,7 +1096,7 @@ def send_state(r):
     """Mỗi đội nhận một bản trạng thái riêng: địch đứng trong bụi cỏ (không có đồng đội ở gần) sẽ bị ẩn."""
     evs, r.ev = r.ev, []
     for t in (0, 1):
-        team = [p for p in r.players.values() if p.team == t and not p.bot]
+        team = [p for p in r.players.values() if p.team == t and not p.bot and not p.away]
         if not team:
             continue
         seers = [p for p in team if p.down <= 0]
@@ -1084,6 +1130,16 @@ def roster(r):
     return [{"pid": p.pid, "nick": p.nick, "team": p.team} for p in r.players.values()]
 
 
+def expire_away(r):
+    """Người chơi mất kết nối quá REJOIN_S giây thì bị loại khỏi trận."""
+    if REJOIN_S <= 0:
+        return
+    now = time.time()
+    for k, q in list(r.players.items()):
+        if q.away and now - q.awayAt > REJOIN_S:
+            drop(k)
+
+
 def wait(r, secs, live, phase):
     end = time.time() + secs; nxt = last = time.time()
     while True:
@@ -1098,6 +1154,7 @@ def wait(r, secs, live, phase):
             return True
         with LOCK:
             r.phase = phase; r.tl = left
+            expire_away(r)
             if phase in ("read", "play"):
                 if not r.paused:
                     step(r, live)
@@ -1148,6 +1205,9 @@ def run_match(r):
             break
     with LOCK:
         r.state = "lobby"; r.phase = "lobby"; r.flags = []; r.bullets = []; r.paused = False
+        for k, q in list(r.players.items()):  # hết trận: người còn đang mất kết nối thì bị loại khỏi phòng
+            if q.away:
+                drop(k)
         remove_bots(r)
         for p in r.players.values():
             p.reset()
