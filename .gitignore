@@ -2,3 +2,4 @@ cloudflared.exe
 cloudflared
 .env
 *.yml
+.data
