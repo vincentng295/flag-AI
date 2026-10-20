@@ -12,11 +12,16 @@ Cướp Cờ Đáp Án AI - máy chủ game chiến thuật 1v1 .. 5v5 (Flask + 
 Cấu hình: copy flag.env.example thành flag.env (cạnh file này). Chạy: python gunicorn.py (Gunicorn, khuyên dùng) hoặc python main.py (máy chủ dev)
 """
 import io, os, re, sys, ssl, json, math, time, random, shutil, socket, hashlib, hmac, platform, tarfile
-import threading, subprocess, urllib.request
+import threading, subprocess, urllib.request, traceback
 from flask import Flask, send_from_directory, abort, request
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from socketio.exceptions import ConnectionRefusedError as RefuseConn
 from werkzeug.serving import WSGIRequestHandler
+try:  # long-polling: mặc định chỉ nhận 16 gói/lượt POST, client gửi input dày sẽ bị "Too many packets in payload"
+    from engineio import payload as _eio_payload
+    _eio_payload.Payload.max_decode_packets = 600
+except Exception:
+    pass
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
@@ -236,7 +241,7 @@ class Room:
         s.pve = pve  # PvE: đội Đỏ (1) là bot do máy điều khiển
         s.players = {}; s.specs = {}; s.nextpid = 1; s.state = "lobby"; s.phase = "lobby"
         s.flags = []; s.bullets = []; s.q = None; s.round = 0; s.tl = 0.0; s.ev = []
-        s.total = [0, 0]; s.dead = False; s.abort = False; s.paused = False
+        s.total = [0, 0]; s.dead = False; s.abort = False; s.paused = False; s.beat = time.time()
 
 
 def clean(v, n):
@@ -496,7 +501,7 @@ def try_match(size):
     for sid, nick in grp:
         p = add_player(r, sid, nick)  # add_player tự chia đều hai đội (xen kẽ)
         sio.emit("me", {"pid": p.pid}, to=sid)
-    r.state = "playing"; r.abort = False; r.paused = False
+    r.state = "playing"; r.abort = False; r.paused = False; r.beat = time.time()
     sio.start_background_task(run_match, r)
     push(r)
     qnotify(size)
@@ -531,7 +536,7 @@ def on_start():
                 return emit("err", "Cần ít nhất 1 người chơi ở đội Xanh.")
         elif not any(p.team == 0 for p in r.players.values()) or not any(p.team == 1 for p in r.players.values()):
             return emit("err", "Mỗi đội cần ít nhất 1 người.")
-        r.state = "playing"; r.abort = False; r.paused = False
+        r.state = "playing"; r.abort = False; r.paused = False; r.beat = time.time()
         sio.start_background_task(run_match, r)
         push(r)
 
@@ -1092,15 +1097,22 @@ def step(r, live):
         mon_step(r); orb_step(r)
 
 
+def _emit_safe(ev, data, sid):
+    try:
+        sio.emit(ev, data, to=sid)
+    except Exception:
+        pass  # một client lỗi/đã đóng không được làm hỏng cả trận
+
+
 def send_state(r):
     """Mỗi đội nhận một bản trạng thái riêng: địch đứng trong bụi cỏ (không có đồng đội ở gần) sẽ bị ẩn."""
     evs, r.ev = r.ev, []
     for t in (0, 1):
-        team = [p for p in r.players.values() if p.team == t and not p.bot and not p.away]
+        team = [p for p in list(r.players.values()) if p.team == t and not p.bot and not p.away]
         if not team:
             continue
         seers = [p for p in team if p.down <= 0]
-        vis = [p for p in r.players.values() if p.team == t or not in_bush(p.x, p.y)
+        vis = [p for p in list(r.players.values()) if p.team == t or not in_bush(p.x, p.y)
                or any(math.hypot(p.x - s.x, p.y - s.y) < SEE_R for s in seers)]
         ids = {p.pid for p in vis}
         st = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused,
@@ -1112,7 +1124,7 @@ def send_state(r):
                      for mo in r.mons if mo["alive"]],
               "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs]}
         for p in team:
-            sio.emit("st", st, to=p.sid)
+            _emit_safe("st", st, p.sid)
     if r.specs:
         everyone = list(r.players.values())
         full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1,
@@ -1122,8 +1134,8 @@ def send_state(r):
                 "mo": [[mo["id"], mo["t"], round(mo["x"]), round(mo["y"]), mo["hp"], round(mo["ch"], 2), round(mo["la"], 2), round(mo["fl"], 2), round(mo["L"])]
                        for mo in r.mons if mo["alive"]],
                 "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs]}
-        for p in r.specs.values():
-            sio.emit("st", full, to=p.sid)
+        for p in list(r.specs.values()):
+            _emit_safe("st", full, p.sid)
 
 
 def roster(r):
@@ -1152,13 +1164,17 @@ def wait(r, secs, live, phase):
         left = end - now
         if left <= 0:
             return True
-        with LOCK:
-            r.phase = phase; r.tl = left
-            expire_away(r)
-            if phase in ("read", "play"):
-                if not r.paused:
-                    step(r, live)
-                send_state(r)
+        r.beat = time.time()
+        try:
+            with LOCK:
+                r.phase = phase; r.tl = left
+                expire_away(r)
+                if phase in ("read", "play"):
+                    if not r.paused:
+                        step(r, live)
+                    send_state(r)
+        except Exception:
+            print("[!] Lỗi vòng lặp trận, phòng", r.code); traceback.print_exc()
         nxt += DT
         sio.sleep(max(0.0, nxt - time.time()))
 
@@ -1192,7 +1208,57 @@ def play_round(r, i):
     return wait(r, RESULT_S, False, "result")
 
 
+def finish_match(r):
+    """Kết thúc trận (kể cả khi luồng trận bị lỗi): đưa phòng về sảnh, loại người mất kết nối, báo client."""
+    with LOCK:
+        r.state = "lobby"; r.phase = "lobby"; r.flags = []; r.bullets = []; r.paused = False
+        for k, q in list(r.players.items()):  # hết trận: người còn đang mất kết nối thì bị loại khỏi phòng
+            if q.away:
+                drop(k)
+        remove_bots(r)
+        for p in list(r.players.values()):
+            p.reset()
+    if not r.dead:
+        sio.emit("end", {"tot": r.total, "aborted": r.abort}, to=r.code)
+        r.abort = False
+        with LOCK:
+            push(r)
+
+
 def run_match(r):
+    try:
+        _run_match(r)
+    except Exception:
+        print("[!] Lỗi trong trận, phòng", r.code); traceback.print_exc()
+        r.abort = True
+    finally:
+        try:
+            finish_match(r)
+        except Exception:
+            traceback.print_exc()
+
+
+def janitor():
+    """Dọn phòng treo: phòng không còn ai, hoặc phòng 'đang chơi' mà luồng trận đã chết / đứng quá lâu."""
+    while True:
+        sio.sleep(15)
+        try:
+            with LOCK:
+                now = time.time()
+                for r in list(ROOMS.values()):
+                    expire_away(r)
+                    humans = [q for q in r.players.values() if not q.bot]
+                    if not humans and not r.specs:
+                        r.dead = True; ROOMS.pop(r.code, None); print("[*] Dọn phòng trống", r.code)
+                    elif r.state == "playing" and now - getattr(r, "beat", now) > 20:
+                        print("[!] Phòng", r.code, "đứng im >20s, ép kết thúc trận"); r.abort = True
+                        finish_match(r)
+                sio.emit("rooms", rooms_list())
+        except Exception:
+            traceback.print_exc()
+
+
+def _run_match(r):
     load_questions()
     r.total = [0, 0]
     with LOCK:
@@ -1203,19 +1269,6 @@ def run_match(r):
     for i in range(r.rounds):
         if not play_round(r, i):
             break
-    with LOCK:
-        r.state = "lobby"; r.phase = "lobby"; r.flags = []; r.bullets = []; r.paused = False
-        for k, q in list(r.players.items()):  # hết trận: người còn đang mất kết nối thì bị loại khỏi phòng
-            if q.away:
-                drop(k)
-        remove_bots(r)
-        for p in r.players.values():
-            p.reset()
-    if not r.dead:
-        sio.emit("end", {"tot": r.total, "aborted": r.abort}, to=r.code)
-        r.abort = False
-        with LOCK:
-            push(r)
 
 
 # ---------- Cloudflare Tunnel (giống snake-AI) ----------
@@ -1499,6 +1552,7 @@ def startup_worker():
         return
     _boot["worker"] = True
     load_questions()
+    sio.start_background_task(janitor)
     print(f"[*] Phiên bản game: {VERSION_NAME} (version {VERSION}) - chỉ client cùng version được kết nối")
     print(f"[*] Bản đồ {TW}x{TH} ô, {HZ} lần/giây. CORS: {ORIGINS if ORIGINS == '*' else ', '.join(ORIGINS)}")
     print(f"[*] Mở http://{'127.0.0.1' if HOST in ('0.0.0.0', '::') else HOST}:{PORT}/")

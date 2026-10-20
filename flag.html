@@ -147,7 +147,7 @@ function tryRejoin(){let c='';try{c=localStorage.lastRoom||''}catch(e){}if(!c||!
 function rjCancel(){rjDone();clearLast();rjIgnore=true;setTimeout(()=>{rjIgnore=false},4000);if(sock)sock.emit('leave')}
 function init(){fetch('version.json?'+Date.now(),{cache:'no-store'}).then(r=>r.json()).catch(()=>({})).then(v=>start(v||{}))}
 function start(V){
- const srv=new URLSearchParams(location.search).get('server'),opt={auth:{version:V.version,tok:getTok()}};sock=srv?io(srv,opt):io(opt);
+ const srv=new URLSearchParams(location.search).get('server'),opt={auth:{version:V.version,tok:getTok()}};opt.transports=['websocket','polling'];sock=srv?io(srv,opt):io(opt);
  $('#ver').textContent=V.versionName||'';
  sock.on('connect_error',e=>{const d=e&&e.data;if(d&&d.code==='version'){const b=$('#verr');b.innerHTML=`⚠️ Phiên bản không khớp: bạn đang dùng <b>${esc(V.versionName||'?')}</b>, máy chủ chạy <b>${esc(d.server)}</b>. Hãy tải lại trang (Ctrl+F5) để cập nhật.`;b.classList.remove('hide');sock.disconnect()}});
  sock.on('connect',()=>{$('#verr').classList.add('hide');tryRejoin()});
@@ -241,7 +241,8 @@ function readInput(me){
  else if((dx||dy)&&mv.id===null&&!mouse.on)a=Math.atan2(dy,dx);
  const shT=sd.id!==null;if(shT){const v=vec(sd,sd.R||55);if(v[2]>6)a=Math.atan2(v[1],v[0])}
  const sh=MYW===1&&!!(shT||shHeld||keys.KeyE||keys.ShiftLeft||keys.ShiftRight||mouse.sh);if(sh)f=false;if(MYW===0&&me&&(f||am.id!==null||mouse.on))a=autoAim(me,a);inp={dx,dy,a,f,sh};const k=[dx.toFixed(1),dy.toFixed(1),a.toFixed(1),f,MYG,MYW,sh].join(),now=performance.now();
- if(sock&&inGame&&(k!==lastKey&&now-lastSend>33||now-lastSend>250||((dx||dy)&&now-lastSend>50))){sock.emit('inp',{dx,dy,a,f,sh,g:MYG,w:MYW,ep:myEp,x:me?+me.x.toFixed(1):undefined,y:me?+me.y.toFixed(1):undefined});lastKey=k;lastSend=now}}
+ const G=(sock&&sock.io&&sock.io.engine&&sock.io.engine.transport&&sock.io.engine.transport.name==='polling')?110:33;
+ if(sock&&inGame&&(k!==lastKey&&now-lastSend>G||now-lastSend>250||((dx||dy)&&now-lastSend>G*1.5))){sock.emit('inp',{dx,dy,a,f,sh,g:MYG,w:MYW,ep:myEp,x:me?+me.x.toFixed(1):undefined,y:me?+me.y.toFixed(1):undefined});lastKey=k;lastSend=now}}
 
 /* ===== HÀNH ĐỘNG CỦA MÌNH: hiện NGAY trên máy (đạn, nhát chém, hướng nhìn, khiên), không chờ máy chủ.
    Máy chủ vẫn là trọng tài sát thương/hạ gục; đạn của mình từ máy chủ được ẩn đi để khỏi vẽ đôi. ===== */
