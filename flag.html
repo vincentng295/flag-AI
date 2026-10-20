@@ -8,11 +8,11 @@
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
 <link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#14306b">
+<meta name="theme-color" content="#14306b"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="format-detection" content="telephone=no">
 <style>
 :root{--sky:#cfeaff;--ink:#14306b}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
-html,body{height:100%;margin:0;background:var(--sky);color:var(--ink);overflow:hidden;touch-action:none;
+html,body{height:100%;margin:0;background:var(--sky);color:var(--ink);overflow:hidden;touch-action:none;overscroll-behavior:none;-webkit-text-size-adjust:100%;-webkit-user-drag:none;
  font-family:ui-rounded,"Nunito","Segoe UI",system-ui,sans-serif;font-weight:700}
 button,input,select{font:inherit;color:inherit}
 input,select{border:3px solid var(--ink);border-radius:12px;padding:8px 10px;background:#fff;width:100%;-webkit-user-select:text;user-select:text}
@@ -192,7 +192,7 @@ function drawRoom(){const r=room;$('#bs1').classList.toggle('hide',!!r.pve);$('#
 function banner(t){const b=$('#banner');b.textContent=t;b.classList.remove('go');void b.offsetWidth;b.classList.add('go')}
 
 /* ================= NÚT: TOÀN MÀN HÌNH / ÂM THANH / TẠM DỪNG / THOÁT ================= */
-function fsEnter(){const d=document,e=d.documentElement;if(!matchMedia('(pointer:coarse)').matches)return;/* máy tính (Windows...): không tự toàn màn hình, chỉ bật bằng nút */if(d.fullscreenElement||d.webkitFullscreenElement)return;const f=e.requestFullscreen||e.webkitRequestFullscreen;if(!f)return;try{Promise.resolve(f.call(e)).then(()=>{try{screen.orientation.lock('landscape').catch(()=>{})}catch(_){}}).catch(()=>{})}catch(_){}}
+function fsEnter(){const d=document,e=d.documentElement;if(!matchMedia('(pointer:coarse)').matches)return;/* máy tính (Windows...): không tự toàn màn hình, chỉ bật bằng nút */if(d.fullscreenElement||d.webkitFullscreenElement)return;if(Date.now()-(window.fsT||0)<5000)return;window.fsT=Date.now();const f=e.requestFullscreen||e.webkitRequestFullscreen;if(!f)return;try{Promise.resolve(f.call(e)).then(()=>{try{screen.orientation.lock('landscape').catch(()=>{})}catch(_){}}).catch(()=>{})}catch(_){}}
 ['pointerdown','touchend','keydown'].forEach(t=>addEventListener(t,()=>{if(inGame)fsEnter()},{capture:true}));
 function fsToggle(){const d=document,e=d.documentElement;if(d.fullscreenElement||d.webkitFullscreenElement){(d.exitFullscreen||d.webkitExitFullscreen).call(d);return}
  const f=e.requestFullscreen||e.webkitRequestFullscreen;if(!f){toast('Trình duyệt này không hỗ trợ toàn màn hình. Trên iPhone: Chia sẻ → Thêm vào Màn hình chính.');return}
@@ -419,15 +419,15 @@ const st=document.createElement('style');st.textContent=`.cb{position:fixed;bord
 for(const n in IDS){const e=document.createElement('div');e.className='cb';e.id=IDS[n];e.innerHTML=`<span class="ci">${LAB[n][0]}</span><small>${LAB[n][1]}</small>`+(n==='move'||n==='aim'||n==='shield'?'<i class="kn"></i>':'');G.appendChild(e);el[n]=e}
 function sz(n){const H=innerHeight,b={move:Math.max(112,H*.30),aim:Math.max(98,H*.22),drop:Math.max(54,H*.12),swap:Math.max(54,H*.12),shield:Math.max(84,H*.19)}[n];return b*cfg.s}
 function place(n){const d=sz(n),p=cfg.pos[n]||DEF[n],W=innerWidth,H=innerHeight,e=el[n];
- const cx=Math.min(Math.max(p[0]*W,d/2),W-d/2),cy=Math.min(Math.max(p[1]*H,d/2),H-d/2);
+ const mx=Math.max(18,W*.02),my=Math.max(28,H*.05),cx=Math.min(Math.max(p[0]*W,d/2+mx),W-d/2-mx),cy=Math.min(Math.max(p[1]*H,d/2+my),H-d/2-my);
  e.style.cssText+=`;left:${cx-d/2}px;top:${cy-d/2}px;width:${d}px;height:${d}px;--d:${d}px`}
 const all=()=>{for(const n in el)place(n)};
 function vis(){const on=cfg.on===null?auto:cfg.on;ctlOn=on;B.classList.toggle('tc',on);for(const n in el)el[n].style.display=(on||editing)?'flex':'none'}
 function knob(e,s){const k=e.querySelector('.kn');if(!s){k.style.transform='';return}let x=s.x-s.ox,y=s.y-s.oy;const n=Math.hypot(x,y),r=s.R;if(n>r){x*=r/n;y*=r/n}k.style.transform=`translate(${x*.6}px,${y*.6}px)`}
 function stick(n,s){const e=el[n];
- e.addEventListener('pointerdown',ev=>{if(editing||s.id!==null)return;ev.preventDefault();const b=e.getBoundingClientRect();s.id=ev.pointerId;s.ox=b.left+b.width/2;s.oy=b.top+b.height/2;s.R=b.width/2*.8;s.x=ev.clientX;s.y=ev.clientY;e.setPointerCapture(ev.pointerId);knob(e,s)});
+ e.addEventListener('pointerdown',ev=>{if(editing)return;ev.preventDefault();const b=e.getBoundingClientRect();s.id=ev.pointerId;s.ox=b.left+b.width/2;s.oy=b.top+b.height/2;s.R=b.width/2*.8;s.x=ev.clientX;s.y=ev.clientY;try{e.setPointerCapture(ev.pointerId)}catch(_){}knob(e,s)});
  e.addEventListener('pointermove',ev=>{if(s.id===ev.pointerId){s.x=ev.clientX;s.y=ev.clientY;knob(e,s)}});
- const end=ev=>{if(s.id===ev.pointerId){s.id=null;s.R=0;knob(e,null)}};e.addEventListener('pointerup',end);e.addEventListener('pointercancel',end)}
+ const end=ev=>{if(s.id===ev.pointerId){s.id=null;s.R=0;knob(e,null)}};e.addEventListener('pointerup',end);e.addEventListener('pointercancel',end);e.addEventListener('lostpointercapture',end)}
 stick('move',mv);stick('aim',am);
 el.drop.addEventListener('pointerdown',ev=>{if(!editing){ev.preventDefault();dropFlag()}});
 el.swap.addEventListener('pointerdown',ev=>{if(!editing){ev.preventDefault();swapW()}});
@@ -476,5 +476,26 @@ bar.onclick=e=>{const b=e.target.closest('button');if(b){spF=+b.dataset.p;render
 addEventListener('keydown',e=>{if(!inGame||!isSpec())return;const ids=[0,...Object.values(names).sort((a,b)=>a.team-b.team||a.pid-b.pid).map(p=>p.pid)];let i=Math.max(0,ids.indexOf(spF));
  if(e.code==='ArrowRight')spF=ids[(i+1)%ids.length];else if(e.code==='ArrowLeft')spF=ids[(i+ids.length-1)%ids.length];else if(e.code==='KeyV')spF=0;else return;render()});
 setInterval(render,200)})();
+</script>
+<script>
+/* ===== Chống lỗi cảm ứng iPad/iPhone Safari: kẹt nút, zoom, cử chỉ hệ thống ===== */
+(function(){
+ const noop=e=>e.preventDefault();
+ ['gesturestart','gesturechange','gestureend'].forEach(t=>document.addEventListener(t,noop,{passive:false})); // chặn pinch-zoom của Safari
+ document.addEventListener('touchmove',e=>{if(inGame&&!e.target.closest('.mdl,#q,#ov,#pz'))e.preventDefault()},{passive:false}); // chặn cuộn/bounce/kéo thả trang khi đang chơi
+ let lt=0;document.addEventListener('touchend',e=>{const n=Date.now();if(inGame&&n-lt<320&&!e.target.closest('.mdl,#ov,#pz'))e.preventDefault();lt=n},{passive:false}); // chặn double-tap zoom
+ document.addEventListener('contextmenu',e=>{if(inGame)e.preventDefault()});
+ document.addEventListener('dragstart',e=>e.preventDefault());
+ function resetCtl(all){
+  mv.id=am.id=sd.id=null;mv.R=am.R=sd.R=0;shHeld=false;
+  if(all){mouse.down=mouse.sh=false;for(const k in keys)keys[k]=false}
+  document.querySelectorAll('.cb .kn').forEach(k=>k.style.transform='');
+  const s=document.getElementById('cShield');if(s)s.classList.remove('on')}
+ // Hệ thống (cử chỉ 3-5 ngón, vuốt mép, thanh Home...) có thể cắt cảm ứng mà không báo pointerup: khi không còn ngón nào chạm màn hình thì nhả hết nút
+ const lift=e=>{if(!e.touches||e.touches.length===0)resetCtl(false)};
+ document.addEventListener('touchend',lift,{passive:true});document.addEventListener('touchcancel',lift,{passive:true});
+ addEventListener('pagehide',()=>resetCtl(true));addEventListener('blur',()=>resetCtl(true));
+ document.addEventListener('visibilitychange',()=>{if(document.hidden)resetCtl(true)});
+})();
 </script>
 </body></html>
