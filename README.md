@@ -1,8 +1,14 @@
 # 🚩 Cướp Cờ Đáp Án AI
 
+<img alt="banner" src="https://github.com/user-attachments/assets/1b1ce9cb-0317-492c-af5d-a41db91fcc45" />
+
+
 Game chiến thuật đồng đội **1v1 → 5v5** chạy trên trình duyệt (điện thoại hoặc máy tính). Hai đội **Xanh** và **Đỏ** tranh nhau các lá cờ ghi đáp án A/B/C/D của một câu hỏi, rồi mang về căn cứ của mình để cắm. Hết giờ mới chấm: cờ nằm ở căn cứ đội nào thì đội đó được cộng hoặc trừ điểm.
 
 ## Nhân vật và vũ khí
+
+<img alt="gameplay" src="https://github.com/user-attachments/assets/3ef96bb8-373c-461a-8b7b-d9de50b846fd" />
+
 
 | | |
 |---|---|
@@ -14,6 +20,9 @@ Game chiến thuật đồng đội **1v1 → 5v5** chạy trên trình duyệt 
 Trúng 1 đòn mất 1 máu (mặc định 3 máu). Hết máu thì bị "đóng băng" 5 giây rồi hồi sinh ở căn cứ. Người đang vác cờ không bắn và không chém được.
 
 ## Quái vật, EXP và cấp độ
+
+<img alt="fullmap_gameplay" src="https://github.com/user-attachments/assets/c81472c6-77d6-4950-bac3-c29553e50e7d" />
+
 
 - **Quái vật:** mỗi round có 8 quái nhỏ đặt đối xứng hai bên (🟢 slime chậm, 🦇 dơi nhanh) và 1 **Golem** ở giữa bản đồ. Quái đuổi người ở gần, chạm vào là mất máu (Golem mất 2). Bị hạ thì hồi sinh sau 25 giây (Golem 45 giây).
 - **Thần giữ cờ 👁️:** mỗi lá cờ có 1 thần đứng cạnh (25 máu, +80 điểm). Nó ngắm người gần nhất trong 480 px, nạp 0.9 giây (có đường đỏ báo trước, khoá hướng ở 0.35 giây cuối) rồi bắn tia laze xuyên người, dừng ở tường, mất 2 máu, hồi chiêu 2.6 giây. Laze trúng cả hai đội. Hạ được thì rớt nhiều EXP và luôn rớt ❤️, hồi sinh sau 45 giây.
