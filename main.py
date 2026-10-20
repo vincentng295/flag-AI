@@ -632,7 +632,7 @@ def bot_ai(r, p):
         shoot = (tgt.x, tgt.y)
     elif p.carry < 0:
         for mo in r.mons:
-            if mo["alive"] and mo["t"] != 3 and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < 230:
+            if mo["alive"] and mo["t"] != 3 and not friendly(mo, p.team) and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < 230:
                 shoot = (mo["x"], mo["y"]); break
     home = p.carry >= 0
     if home:
@@ -711,11 +711,27 @@ def take(r, p, k, f):
 MON = {0: dict(hp=3, sp=70, r=14, dmg=1, pts=10, exp=(1, 2), heal=0.12, rt=25),    # slime
        1: dict(hp=2, sp=120, r=12, dmg=1, pts=15, exp=(1, 3), heal=0.12, rt=25),   # dơi
        2: dict(hp=14, sp=45, r=26, dmg=2, pts=60, exp=(5, 8), heal=1.0, rt=45),    # golem (trùm giữa bản đồ)
-       3: dict(hp=25, sp=GUARD_SP, r=GUARD_R, dmg=2, pts=80, exp=(6, 9), heal=1.0, rt=45)}  # thần giữ cờ: đi dạo quanh cờ, bắn laze, bị bắn thì đuổi
+       3: dict(hp=25, sp=GUARD_SP, r=GUARD_R, dmg=2, pts=80, exp=(6, 9), heal=1.0, rt=45),  # thần giữ cờ: đi dạo quanh cờ, bắn laze, bị bắn thì đuổi
+       4: dict(hp=6, sp=110, r=16, dmg=1, pts=25, exp=(3, 5), heal=0.3, rt=0)}  # hiệp sĩ canh căn cứ của một đội (chết là mất hẳn trong round, không hồi sinh)
+
+KNIGHT_N, KNIGHT_RING = 5, 100.0                   # số hiệp sĩ mỗi đội, bán kính vòng tuần tra quanh căn cứ
+KNIGHT_SEE = BASE_R + 170.0                        # địch vào trong tầm này (tính từ tâm căn cứ) thì hiệp sĩ lao ra chặn
+KNIGHT_LEASH = BASE_R + 300.0                      # không đuổi quá xa căn cứ: vượt ngưỡng này là quay về vị trí gác
+KNIGHT_ORBIT = 0.35                                # tốc độ đi vòng quanh căn cứ khi tuần tra (rad/giây)
+
+
+def friendly(mo, team):
+    """Hiệp sĩ cùng đội với người bắn/chém thì không bị trúng đòn."""
+    return mo.get("tm", -1) == team
+
+
+def mon_pack(mo):
+    return [mo["id"], mo["t"], round(mo["x"]), round(mo["y"]), mo["hp"], round(mo["ch"], 2), round(mo["la"], 2), round(mo["fl"], 2), round(mo["L"]), mo.get("tm", -1)]
 
 
 def make_mons(r):
-    """Đầu mỗi round: 4 slime + 4 dơi đặt đối xứng hai đội, 1 golem ở giữa, mỗi lá cờ có 1 thần giữ cờ bắn laze."""
+    """Đầu mỗi round: 4 slime + 4 dơi đặt đối xứng hai đội, 1 golem ở giữa, mỗi lá cờ có 1 thần giữ cờ bắn laze,
+    mỗi đội có 5 hiệp sĩ tuần tra quanh căn cứ (không hồi sinh)."""
     r.mons, r.orbs, r.kp = [], [], [0, 0]
     def free(x, y, rad):
         return not hit_wall(x, y, rad + 6) and all(math.hypot(x - b[0], y - b[1]) > 450 for b in BASES)
@@ -723,7 +739,8 @@ def make_mons(r):
         c = MON[t]
         r.mons.append({"id": len(r.mons), "t": t, "x": x, "y": y, "hx": x, "hy": y, "hp": c["hp"], "mhp": c["hp"],
                        "r": c["r"], "cd": 0.0, "alive": True, "rt": 0.0, "ch": 0.0, "fl": 0.0, "lcd": 2.0, "la": 0.0, "L": 0.0,
-                       "ax": x, "ay": y, "ag": None, "wt": 0.0, "ws": 0.0, "wx": x, "wy": y, "kbt": 0.0, "kvx": 0.0, "kvy": 0.0, "stun": 0.0})
+                       "ax": x, "ay": y, "ag": None, "wt": 0.0, "ws": 0.0, "wx": x, "wy": y, "kbt": 0.0, "kvx": 0.0, "kvy": 0.0, "stun": 0.0,
+                       "tm": -1, "pa": 0.0})
     for t in (0, 0, 1, 1):
         for _ in range(80):
             x, y = random.uniform(0.15, 0.85) * W, random.uniform(0.15, 0.85) * H
@@ -740,6 +757,13 @@ def make_mons(r):
                 add(3, x, y)
                 r.mons[-1]["ax"], r.mons[-1]["ay"] = f["x"], f["y"]  # mốc đi dạo = vị trí lá cờ
                 break
+    for team in (0, 1):  # hiệp sĩ canh căn cứ: xếp đều quanh căn cứ, góc xuất phát ngẫu nhiên
+        bx, by = BASES[team]; a0 = random.uniform(0, 6.283)
+        for k in range(KNIGHT_N):
+            a = a0 + k * 6.283185 / KNIGHT_N
+            x, y = bx + math.cos(a) * KNIGHT_RING, by + math.sin(a) * KNIGHT_RING
+            add(4, x, y)
+            r.mons[-1]["tm"] = team; r.mons[-1]["pa"] = a
 
 
 def drop_orb(r, x, y, k, v=0):
@@ -785,7 +809,7 @@ def hit_mon(r, mo, team, by=None, dmg=1):
     mo["hp"] -= dmg
     r.ev.append(["h", round(mo["x"]), round(mo["y"]), team])
     if mo["hp"] > 0:
-        if mo["t"] == 3 and by is not None:
+        if mo["t"] in (3, 4) and by is not None:
             mo["ag"] = by  # bị đánh -> đuổi theo người đánh cho tới khi họ chạy thoát
         return
     c = MON[mo["t"]]
@@ -882,9 +906,33 @@ def guard_step(r, mo, c):
     return near, bd
 
 
+def knight_step(r, mo, c):
+    """Hiệp sĩ: đi vòng quanh căn cứ đội mình; địch lại gần căn cứ (hoặc bắn/chém nó) thì lao ra đánh cận chiến,
+    đuổi tới khi địch ngã / chạy thoát / bị kéo quá xa căn cứ thì quay về vị trí gác. Trả về (mục tiêu, khoảng cách)."""
+    bx, by = BASES[mo["tm"]]
+    tg = mo["ag"]
+    if tg is not None and (tg not in r.players.values() or tg.down > 0 or tg.team == mo["tm"]
+                           or math.hypot(tg.x - bx, tg.y - by) > KNIGHT_LEASH):
+        mo["ag"] = tg = None
+    if tg is None:
+        bd = KNIGHT_SEE
+        for p in r.players.values():
+            d = math.hypot(p.x - bx, p.y - by)
+            if p.team != mo["tm"] and p.down <= 0 and d < bd:
+                tg, bd = p, d
+    if tg is not None:
+        mon_move(mo, tg.x, tg.y, c["sp"], stop=PR + mo["r"] - 2)
+        return tg, math.hypot(tg.x - mo["x"], tg.y - mo["y"])
+    mo["pa"] = (mo["pa"] + KNIGHT_ORBIT * DT) % 6.283185  # điểm gác trượt dần quanh căn cứ
+    mon_move(mo, bx + math.cos(mo["pa"]) * KNIGHT_RING, by + math.sin(mo["pa"]) * KNIGHT_RING, c["sp"] * 0.8)
+    return None, 1e9
+
+
 def mon_step(r):
     for mo in r.mons:
         if not mo["alive"]:
+            if mo["t"] == 4:
+                continue  # hiệp sĩ chết là mất hẳn tới hết round (round sau make_mons tạo lại)
             mo["rt"] -= DT
             if mo["rt"] <= 0:
                 mo.update(alive=True, hp=mo["mhp"], x=mo["hx"], y=mo["hy"], ch=0.0, fl=0.0, lcd=2.0,
@@ -903,6 +951,8 @@ def mon_step(r):
         if mo["t"] == 3:
             laser_step(r, mo)
             tg, bd = guard_step(r, mo, c)
+        elif mo["t"] == 4:
+            tg, bd = knight_step(r, mo, c)
         else:
             tg, bd = None, 300.0
             for p in r.players.values():
@@ -946,8 +996,8 @@ def orb_step(r):
 
 
 KB_DIST, KB_T = 110.0, 0.22   # kiếm: đánh bật lùi người chơi 110px trong 0.22s (đồng thời ngắt hành động)
-KB_MON = {0: 120.0, 1: 140.0, 2: 40.0, 3: 60.0}   # quãng bật lùi theo loại quái (golem nặng nên ít lùi)
-KB_STUN = {0: 0.6, 1: 0.6, 2: 0.35, 3: 0.5}       # thời gian quái bị choáng (không đi, không đánh, không nạp laze)
+KB_MON = {0: 120.0, 1: 140.0, 2: 40.0, 3: 60.0, 4: 70.0}   # quãng bật lùi theo loại quái (golem nặng nên ít lùi)
+KB_STUN = {0: 0.6, 1: 0.6, 2: 0.35, 3: 0.5, 4: 0.4}       # thời gian quái bị choáng (không đi, không đánh, không nạp laze)
 
 
 def knock_player(r, q, src):
@@ -1001,7 +1051,7 @@ def step(r, live):
             p.cool, p.sw = SWORD_COOL, SWORD_T
             r.ev.append(["m", round(p.x), round(p.y), p.team, p.pid])
             for mo in r.mons:
-                if mo["alive"] and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < SWORD_R + mo["r"] + 4 * (p.lv - 1):
+                if mo["alive"] and not friendly(mo, p.team) and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < SWORD_R + mo["r"] + 4 * (p.lv - 1):
                     ang = abs((math.atan2(mo["y"] - p.y, mo["x"] - p.x) - p.a + math.pi) % (2 * math.pi) - math.pi)
                     if ang < 1.05 or math.hypot(mo["x"] - p.x, mo["y"] - p.y) < PR + mo["r"] + 6:
                         hit_mon(r, mo, p.team, p, SWORD_DMG)
@@ -1077,7 +1127,7 @@ def step(r, live):
             if p.team != b["t"] and p.down <= 0 and math.hypot(p.x - b["x"], p.y - b["y"]) < PR + 3:
                 hit = p; break
         if not hit:
-            mh = next((mo for mo in r.mons if mo["alive"] and math.hypot(mo["x"] - b["x"], mo["y"] - b["y"]) < mo["r"] + 3), None)
+            mh = next((mo for mo in r.mons if mo["alive"] and not friendly(mo, b["t"]) and math.hypot(mo["x"] - b["x"], mo["y"] - b["y"]) < mo["r"] + 3), None)
             if mh:
                 hit_mon(r, mh, b["t"], b.get("o"))
                 continue
@@ -1120,8 +1170,7 @@ def send_state(r):
               "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] if (not f["c"] or f["c"].pid in ids)
                     else [-1, -1, f["c"].pid, -1] for f in r.flags],
               "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid] for b in r.bullets], "ev": evs, "kp": r.kp,
-              "mo": [[mo["id"], mo["t"], round(mo["x"]), round(mo["y"]), mo["hp"], round(mo["ch"], 2), round(mo["la"], 2), round(mo["fl"], 2), round(mo["L"])]
-                     for mo in r.mons if mo["alive"]],
+              "mo": [mon_pack(mo) for mo in r.mons if mo["alive"]],
               "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs]}
         for p in team:
             _emit_safe("st", st, p.sid)
@@ -1131,8 +1180,7 @@ def send_state(r):
                 "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0)] for p in everyone],
                 "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] for f in r.flags],
                 "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid] for b in r.bullets], "ev": evs, "kp": r.kp,
-                "mo": [[mo["id"], mo["t"], round(mo["x"]), round(mo["y"]), mo["hp"], round(mo["ch"], 2), round(mo["la"], 2), round(mo["fl"], 2), round(mo["L"])]
-                       for mo in r.mons if mo["alive"]],
+                "mo": [mon_pack(mo) for mo in r.mons if mo["alive"]],
                 "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs]}
         for p in list(r.specs.values()):
             _emit_safe("st", full, p.sid)

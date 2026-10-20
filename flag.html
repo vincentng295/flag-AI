@@ -256,7 +256,7 @@ function localAct(dt,me){
   for(let k=0;k<n&&!dead;k++){b.x+=b.vx*dt/n;b.y+=b.vy*dt/n;
    if(hitW(b.x,b.y,2)){dead=true;break}
    for(const q of S.p)if(q[1]!==pp[1]&&q[6]<=0){const d=disp[q[0]];if(d&&Math.hypot(d.x-b.x,d.y-b.y)<17){dead=true;break}}
-   if(!dead)for(const m of S.mo||[]){const d=mdisp[m[0]];if(d&&Math.hypot(d.x-b.x,d.y-b.y)<MR[m[1]]+3){dead=true;break}}}
+   if(!dead)for(const m of S.mo||[]){if(m[1]===4&&m[9]===pp[1])continue;const d=mdisp[m[0]];if(d&&Math.hypot(d.x-b.x,d.y-b.y)<MR[m[1]]+3){dead=true;break}}}
   b.l-=dt;if(dead||b.l<=0)LB.splice(i,1)}
  if(pp[17])lSw=0;if(inp.f&&!pp[17]&&lCool<=0){
   if(MYW===1){lCool=(M.swCool||.55)+.07;lSw=M.swT||.25;sfx('m',me.x,me.y)}
@@ -386,7 +386,7 @@ document.getElementById('g0').onclick=()=>setG(0);document.getElementById('g1').
 addEventListener('keydown',e=>{if(e.code==='KeyE'||e.code==='KeyQ')swapW();if(e.code==='KeyF')dropFlag()});
 </script>
 <script>
-const mdisp={},MR=[14,12,26,22],MH=[3,2,14,25];
+const mdisp={},MR=[14,12,26,22,16],MH=[3,2,14,25,6];
 const lvb=document.createElement('div');lvb.style.cssText='position:fixed;left:10px;top:58px;z-index:5;background:#fff;border:3px solid #14306b;border-radius:12px;padding:3px 10px;font:800 13px sans-serif;min-width:120px;box-shadow:0 3px 0 #14306b';
 lvb.innerHTML='<span></span><div style="height:7px;background:#dde;border-radius:4px;margin-top:3px;overflow:hidden"><i style="display:block;height:100%;width:0;background:#ffb800"></i></div>';
 document.getElementById('tb').parentNode.appendChild(lvb);
@@ -407,6 +407,13 @@ function drawMon(m,d,t){const R=MR[m[1]],x=d.x,y=d.y;ctx.save();ctx.translate(x,
   ctx.beginPath();ctx.arc(0,0,21*(1+.05*Math.sin(t*5)),0,7);ctx.fill();ctx.stroke();
   ctx.fillStyle='#fff';ctx.beginPath();ctx.ellipse(0,0,14,10,0,0,7);ctx.fill();ctx.stroke();
   if(ch>0){ctx.shadowColor='#ff2a4d';ctx.shadowBlur=14}ctx.fillStyle=ch>0?'#ff2a4d':'#ffd23f';ctx.beginPath();ctx.arc(Math.cos(La)*4,Math.sin(La)*4,5.5,0,7);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#111';ctx.beginPath();ctx.arc(Math.cos(La)*4,Math.sin(La)*4,2.2,0,7);ctx.fill()}
+ else if(m[1]===4){const tc=TC[m[9]]||'#888';const mv=Math.hypot(m[2]-d.x,m[3]-d.y);if(mv>.4)d.fa=Math.atan2(m[3]-d.y,m[2]-d.x);const fa=d.fa||0;ctx.rotate(fa);const sw=Math.sin(t*6+m[0])*.12;
+  ctx.fillStyle='#c9ced8';ctx.strokeStyle='#2b2f3a';ctx.save();ctx.rotate(.9+sw);ctx.beginPath();ctx.moveTo(8,10);ctx.lineTo(30,10);ctx.lineTo(34,12);ctx.lineTo(30,14);ctx.lineTo(8,14);ctx.closePath();ctx.fill();ctx.stroke();ctx.fillStyle='#8a5a2b';ctx.fillRect(5,8,5,8);ctx.strokeRect(5,8,5,8);ctx.restore();
+  ctx.fillStyle=tc;ctx.strokeStyle='#14181f';ctx.beginPath();ctx.arc(0,0,R,0,7);ctx.fill();ctx.stroke();
+  ctx.fillStyle='#e8ebf2';ctx.beginPath();ctx.moveTo(-9,-13);ctx.lineTo(9,-13);ctx.lineTo(11,3);ctx.lineTo(-11,3);ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.fillStyle='#14181f';ctx.fillRect(-1,-13,2,16);ctx.fillRect(-8,-4,16,3);
+  ctx.fillStyle=tc;ctx.beginPath();ctx.moveTo(-3,-13);ctx.lineTo(0,-22);ctx.lineTo(3,-13);ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.save();ctx.translate(2,-14);ctx.fillStyle='#e8ebf2';ctx.beginPath();ctx.roundRect(-4,-5,8,10,3);ctx.fill();ctx.stroke();ctx.fillStyle=tc;ctx.fillRect(-1.5,-3,3,6);ctx.restore()}
  else{ctx.fillStyle='#8d8f98';ctx.strokeStyle='#3a3c46';for(const s of[-1,1]){ctx.beginPath();ctx.arc(s*28,6+Math.sin(t*3)*2,10,0,7);ctx.fill();ctx.stroke()}
   ctx.beginPath();ctx.roundRect(-23,-23,46,46,11);ctx.fill();ctx.stroke();ctx.strokeStyle='#5d5f69';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-14,12);ctx.lineTo(-6,4);ctx.lineTo(-10,-4);ctx.moveTo(12,-16);ctx.lineTo(6,-8);ctx.stroke();
   ctx.fillStyle='#ffa31a';ctx.shadowColor='#ff7a00';ctx.shadowBlur=8;ctx.fillRect(-11,-8,8,6);ctx.fillRect(3,-8,8,6);ctx.shadowBlur=0}
@@ -497,7 +504,7 @@ function autoAim(me,a){
   const o=Math.abs(((Math.atan2(dy,dx)-a+Math.PI)%6.2832+6.2832)%6.2832-Math.PI);
   if(o-Math.atan2(r,d)>.3||o>=bo||!los(x,y))return;bo=o;best={x,y}};
  for(const q of S.p){if(q[1]===mt||q[6]>0)continue;const d=disp[q[0]];if(d)test(d.x,d.y,14)}
- for(const m of S.mo||[]){const d=mdisp[m[0]];if(d)test(d.x,d.y,MR[m[1]])}
+ for(const m of S.mo||[]){if(m[1]===4&&m[9]===mt)continue;const d=mdisp[m[0]];if(d)test(d.x,d.y,MR[m[1]])}
  if(!best)return a;lockT=best;return Math.atan2(best.y-me.y,best.x-me.x)}
 </script>
 <script>
