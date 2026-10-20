@@ -15,6 +15,7 @@ import io, os, re, sys, ssl, json, math, time, random, shutil, socket, hashlib, 
 import threading, subprocess, urllib.request
 from flask import Flask, send_from_directory, abort, request
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from socketio.exceptions import ConnectionRefusedError as RefuseConn
 from werkzeug.serving import WSGIRequestHandler
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -63,6 +64,21 @@ ALLOW_ANY_HOST = not ALLOWED_HOSTS or "*" in ALLOWED_HOSTS
 TUNNEL_ENABLED = env_bool("TUNNEL", False)
 TUNNEL_HOST = os.getenv("TUNNEL_HOST", "").strip()
 TUNNEL_TOKEN = os.getenv("TUNNEL_TOKEN", "").strip()
+
+
+def load_version():
+    """Đọc version.json: chỉ client cùng "version" mới được kết nối."""
+    path = os.path.join(BASE, os.getenv("VERSION_FILE", "version.json"))
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return str(d.get("versionName", "")).strip() or "v?", int(d.get("version", 0))
+    except Exception as e:
+        print("[!] Không đọc được version.json:", e)
+        return "v0", 0
+
+
+VERSION_NAME, VERSION = load_version()
 
 READ_S, PLAY_S, RESULT_S = env_num("READ_SECONDS", 10), env_num("PLAY_SECONDS", 170), env_num("RESULT_SECONDS", 12)
 HP, DOWN_S = env_num("HP", 3), env_num("DOWN_SECONDS", 5.0)
@@ -296,7 +312,10 @@ def drop(sid):
 
 # ---------- sự kiện lobby ----------
 @sio.on("connect")
-def _connect():
+def _connect(auth=None):
+    cv = auth.get("version") if isinstance(auth, dict) else None
+    if str(cv) != str(VERSION):
+        raise RefuseConn({"code": "version", "server": VERSION_NAME, "version": VERSION})
     emit("rooms", rooms_list())
 
 
@@ -591,7 +610,7 @@ def bot_ai(r, p):
         ai["det"] -= DT; dx, dy = ai["dd"]
     p.dx, p.dy = dx, dy
     p.w = 0; p.sh = False
-    if shoot and p.carry < 0:
+    if shoot:
         p.a = math.atan2(shoot[1] - p.y, shoot[0] - p.x) + random.uniform(-0.13, 0.13)
         p.fire = random.random() < 0.8
     else:
@@ -696,7 +715,7 @@ def on_kill(r, victim, team):
 
 
 def shielding(p):
-    return p.sh and p.w == 1 and p.carry < 0 and p.down <= 0
+    return p.sh and p.w == 1 and p.down <= 0
 
 
 def blocked(r, q, sx, sy):
@@ -885,7 +904,7 @@ def step(r, live):
         p.cool -= DT
         p.sw -= DT
         fire = p.fire or p.fl; p.fl = False
-        if fire and p.carry < 0 and p.cool <= 0 and p.w == 1 and not shielding(p):
+        if fire and p.cool <= 0 and p.w == 1 and not shielding(p):
             p.cool, p.sw = SWORD_COOL, SWORD_T
             r.ev.append(["m", round(p.x), round(p.y), p.team, p.pid])
             for mo in r.mons:
@@ -909,7 +928,7 @@ def step(r, live):
                         q.down = DOWN_S; drop_flag(r, q)
                         r.ev.append(["d", round(q.x), round(q.y), q.team])
                         on_kill(r, q, p.team)
-        elif fire and p.carry < 0 and p.cool <= 0 and p.w == 0:
+        elif fire and p.cool <= 0 and p.w == 0:
             p.cool = COOL
             r.bullets.append({"x": p.x + math.cos(p.a) * (PR + 3), "y": p.y + math.sin(p.a) * (PR + 3),
                               "vx": math.cos(p.a) * BSPEED, "vy": math.sin(p.a) * BSPEED, "t": p.team, "life": BLIFE, "o": p})
@@ -1360,7 +1379,7 @@ def index():
 
 @app.route("/<path:f>")
 def static_files(f):
-    if f in ("socket_io_min.js", "flag.html", "manifest.json", "favicon.ico", "favicon-32.png", "icon-192.png", "icon-512.png"):   # question.json cố tình KHÔNG được trả ra
+    if f in ("socket_io_min.js", "flag.html", "manifest.json", "version.json", "favicon.ico", "favicon-32.png", "icon-192.png", "icon-512.png"):   # question.json cố tình KHÔNG được trả ra
         return send_from_directory(BASE, f)
     abort(404)
 
@@ -1374,6 +1393,7 @@ def startup_worker():
         return
     _boot["worker"] = True
     load_questions()
+    print(f"[*] Phiên bản game: {VERSION_NAME} (version {VERSION}) - chỉ client cùng version được kết nối")
     print(f"[*] Bản đồ {TW}x{TH} ô, {HZ} lần/giây. CORS: {ORIGINS if ORIGINS == '*' else ', '.join(ORIGINS)}")
     print(f"[*] Mở http://{'127.0.0.1' if HOST in ('0.0.0.0', '::') else HOST}:{PORT}/")
     if HOST in ("0.0.0.0", "::") and lan_ip():
