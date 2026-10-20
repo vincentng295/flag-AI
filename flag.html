@@ -223,19 +223,19 @@ cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);cv.a
 function vec(st,r){let x=st.x-st.ox,y=st.y-st.oy;const n=Math.hypot(x,y);if(n>r){x*=r/n;y*=r/n}return[x/r,y/r,n]}
 function resize(){dpr=devicePixelRatio||1;cw=innerWidth;ch=innerHeight;cv.width=cw*dpr;cv.height=ch*dpr}addEventListener('resize',resize);
 function readInput(me){
- if(isSpec())return;
+ lockT=null;if(isSpec())return;
  let dx=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0),dy=(keys.KeyS||keys.ArrowDown?1:0)-(keys.KeyW||keys.ArrowUp?1:0),a=inp.a,f=!!keys.Space||mouse.down;
  if(mv.id!==null){const v=vec(mv,mv.R||55);dx=v[0];dy=v[1]}
  if(am.id!==null){const v=vec(am,am.R||55),dz=ctlOn?4:10;if(v[2]>dz)a=Math.atan2(v[1],v[0]);if(v[2]>dz||ctlOn)f=true}
  else if(mouse.on&&me){a=Math.atan2(mouse.y-((me.y-camy)*sc+ch/2),mouse.x-((me.x-camx)*sc+cw/2))}
  else if((dx||dy)&&mv.id===null&&!mouse.on)a=Math.atan2(dy,dx);
  const shT=sd.id!==null;if(shT){const v=vec(sd,sd.R||55);if(v[2]>6)a=Math.atan2(v[1],v[0])}
- const sh=MYW===1&&!!(shT||shHeld||keys.KeyE||keys.ShiftLeft||keys.ShiftRight||mouse.sh);if(sh)f=false;inp={dx,dy,a,f,sh};const k=[dx.toFixed(1),dy.toFixed(1),a.toFixed(1),f,MYG,MYW,sh].join(),now=performance.now();
+ const sh=MYW===1&&!!(shT||shHeld||keys.KeyE||keys.ShiftLeft||keys.ShiftRight||mouse.sh);if(sh)f=false;if(MYW===0&&me&&(f||am.id!==null||mouse.on))a=autoAim(me,a);inp={dx,dy,a,f,sh};const k=[dx.toFixed(1),dy.toFixed(1),a.toFixed(1),f,MYG,MYW,sh].join(),now=performance.now();
  if(sock&&inGame&&(k!==lastKey&&now-lastSend>33||now-lastSend>250||((dx||dy)&&now-lastSend>50))){sock.emit('inp',{dx,dy,a,f,sh,g:MYG,w:MYW,ep:myEp,x:me?+me.x.toFixed(1):undefined,y:me?+me.y.toFixed(1):undefined});lastKey=k;lastSend=now}}
 
 /* ===== HÀNH ĐỘNG CỦA MÌNH: hiện NGAY trên máy (đạn, nhát chém, hướng nhìn, khiên), không chờ máy chủ.
    Máy chủ vẫn là trọng tài sát thương/hạ gục; đạn của mình từ máy chủ được ẩn đi để khỏi vẽ đôi. ===== */
-let LB=[],lCool=0,lSw=0,aInit=false;
+let LB=[],lCool=0,lSw=0,aInit=false,lockT=null;
 function localAct(dt,me){
  lCool-=dt;lSw-=dt;
  const pp=S&&!isSpec()?S.p.find(q=>q[0]===pid):null;
@@ -247,7 +247,7 @@ function localAct(dt,me){
    for(const q of S.p)if(q[1]!==pp[1]&&q[6]<=0){const d=disp[q[0]];if(d&&Math.hypot(d.x-b.x,d.y-b.y)<17){dead=true;break}}
    if(!dead)for(const m of S.mo||[]){const d=mdisp[m[0]];if(d&&Math.hypot(d.x-b.x,d.y-b.y)<MR[m[1]]+3){dead=true;break}}}
   b.l-=dt;if(dead||b.l<=0)LB.splice(i,1)}
- if(inp.f&&lCool<=0){
+ if(pp[17])lSw=0;if(inp.f&&!pp[17]&&lCool<=0){
   if(MYW===1){lCool=(M.swCool||.55)+.07;lSw=M.swT||.25;sfx('m',me.x,me.y)}
   else{lCool=(M.cool||.32)+.05;const a=inp.a,c=Math.cos(a),s=Math.sin(a);LB.push({x:me.x+c*17,y:me.y+s*17,vx:c*sp,vy:s*sp,l:M.bLife||.7});sfx('s',me.x,me.y)}}
 }
@@ -298,7 +298,7 @@ function flagIcon(x,y,i,al){ctx.globalAlpha=al;ctx.strokeStyle='#14306b';ctx.lin
  ctx.fillStyle=FC[i];ctx.beginPath();ctx.roundRect(x,y-30,26,18,4);ctx.fill();ctx.lineWidth=2;ctx.stroke();
  ctx.fillStyle='#fff';ctx.font='800 14px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(L[i],x+13,y-20);ctx.globalAlpha=1}
 function frame(t){requestAnimationFrame(frame);const dt=Math.min(.1,(t-lastT)/1000);lastT=t;if(!inGame||!M||!S||!TER)return;
- const k=1-Math.exp(-dt*20);let me=null;for(const p of S.p){const d=disp[p[0]];if(d){if(p[0]===pid){if(p[12]!==myEp||p[6]>0||S.ph!=='play'||S.pz){d.x=d.tx;d.y=d.ty;myEp=p[12]}else predict(d,dt,p[7]>=0,p[13])}else{d.x+=(d.tx-d.x)*k;d.y+=(d.ty-d.y)*k}}if(p[0]===pid){me={x:d.x,y:d.y};document.getElementById('bdr').classList.toggle('hide',p[7]<0)}}
+ const k=1-Math.exp(-dt*20);let me=null;for(const p of S.p){const d=disp[p[0]];if(d){if(p[0]===pid){if(p[17]&&p[6]<=0){d.x+=(d.tx-d.x)*k;d.y+=(d.ty-d.y)*k;myEp=-1}else if(p[12]!==myEp||p[6]>0||S.ph!=='play'||S.pz){d.x=d.tx;d.y=d.ty;myEp=p[12]}else predict(d,dt,p[7]>=0,p[13])}else{d.x+=(d.tx-d.x)*k;d.y+=(d.ty-d.y)*k}}if(p[0]===pid){me={x:d.x,y:d.y};document.getElementById('bdr').classList.toggle('hide',p[7]<0)}}
  if(isSpec()&&spF){const d=disp[spF];if(d)me={x:d.x,y:d.y}}
  sc=(isSpec()&&!spF)?Math.min(cw/M.W,ch/M.H):Math.max(.3,Math.min(cw/1100,ch/700));const vw=cw/sc,vh=ch/sc;
  if(me){camx+=(me.x-camx)*Math.min(1,dt*10)||0;camy+=(me.y-camy)*Math.min(1,dt*10)||0}else if(!camx){camx=M.W/2;camy=M.H/2}
@@ -365,7 +365,7 @@ function aimLine(me){const pp=S.p.find(q=>q[0]===pid);if(!pp||pp[6]>0)return;
  const ex=x0+cx*L,ey=y0+sy*L,g=ctx.createLinearGradient(x0,y0,ex,ey);g.addColorStop(0,'rgba(255,255,255,.9)');g.addColorStop(1,'rgba(255,255,255,.25)');
  ctx.save();ctx.lineCap='round';ctx.strokeStyle='rgba(20,48,107,.35)';ctx.lineWidth=6;ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(ex,ey);ctx.stroke();
  ctx.strokeStyle=g;ctx.lineWidth=3;ctx.setLineDash([11,9]);ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(ex,ey);ctx.stroke();ctx.setLineDash([]);
- ctx.strokeStyle='#fff';ctx.fillStyle=TC[pp[1]];ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(ex,ey,7,0,7);ctx.fill();ctx.stroke();ctx.restore()}
+ ctx.strokeStyle='#fff';ctx.fillStyle=TC[pp[1]];ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(ex,ey,7,0,7);ctx.fill();ctx.stroke();if(lockT){ctx.strokeStyle='#ff3d5a';ctx.lineWidth=3;ctx.beginPath();ctx.arc(lockT.x,lockT.y,22,0,7);ctx.stroke()}ctx.restore()}
 function swapW(){if(isSpec())return;MYW=MYW?0:1;const sb=document.getElementById('cShield');if(sb)sb.classList.toggle('off',!MYW);if(!MYW)shHeld=false;const b=document.getElementById('bw');if(b)b.textContent=MYW?'🗡️':'🔫';const c=document.querySelector('#cSwap .ci');if(c)c.textContent=MYW?'🗡️':'🔫'}
 function setG(g){MYG=g;localStorage.setItem('g',g);for(const k of[0,1]){const b=document.getElementById('g'+k),c=b.firstChild.getContext('2d');b.classList.toggle('on',k===g);
  c.clearRect(0,0,84,64);c.save();c.scale(1.5,1.5);drawChar(c,26,21,-.5,0,k,k?0:1,0,0);c.restore()}}
@@ -476,6 +476,18 @@ bar.onclick=e=>{const b=e.target.closest('button');if(b){spF=+b.dataset.p;render
 addEventListener('keydown',e=>{if(!inGame||!isSpec())return;const ids=[0,...Object.values(names).sort((a,b)=>a.team-b.team||a.pid-b.pid).map(p=>p.pid)];let i=Math.max(0,ids.indexOf(spF));
  if(e.code==='ArrowRight')spF=ids[(i+1)%ids.length];else if(e.code==='ArrowLeft')spF=ids[(i+ids.length-1)%ids.length];else if(e.code==='KeyV')spF=0;else return;render()});
 setInterval(render,200)})();
+</script>
+<script>
+/* Tự ngắm: khi bắn súng, hướng đạn tự hút về mục tiêu (địch/quái) gần tâm ngắm nhất, trong tầm và không bị tường chắn */
+function autoAim(me,a){
+ const R=M.aimLen||455,mt=myTeam();let best=null,bo=9;
+ const los=(x,y)=>{const dx=x-me.x,dy=y-me.y,n=Math.ceil(Math.hypot(dx,dy)/14);for(let i=1;i<n;i++)if(wallAt(me.x+dx*i/n,me.y+dy*i/n))return false;return true};
+ const test=(x,y,r)=>{const dx=x-me.x,dy=y-me.y,d=Math.hypot(dx,dy);if(d<1||d>R+r)return;
+  const o=Math.abs(((Math.atan2(dy,dx)-a+Math.PI)%6.2832+6.2832)%6.2832-Math.PI);
+  if(o-Math.atan2(r,d)>.3||o>=bo||!los(x,y))return;bo=o;best={x,y}};
+ for(const q of S.p){if(q[1]===mt||q[6]>0)continue;const d=disp[q[0]];if(d)test(d.x,d.y,14)}
+ for(const m of S.mo||[]){const d=mdisp[m[0]];if(d)test(d.x,d.y,MR[m[1]])}
+ if(!best)return a;lockT=best;return Math.atan2(best.y-me.y,best.x-me.x)}
 </script>
 <script>
 /* ===== Chống lỗi cảm ứng iPad/iPhone Safari: kẹt nút, zoom, cử chỉ hệ thống ===== */

@@ -224,6 +224,7 @@ class P:
         s.x = s.y = 0.0; s.a = 0.0; s.hp = HP; s.down = 0.0; s.cool = 0.0
         s.lv = 1; s.exp = 0; s.mhp = HP
         s.sw = 0.0; s.dx = s.dy = 0.0; s.fire = False; s.fl = False; s.sh = False; s.carry = -1; s.prog = 0.0; s.pf = -1
+        s.kbt = 0.0; s.kvx = s.kvy = 0.0  # kbt: thời gian còn bị bật lùi
 
 
 class Room:
@@ -528,7 +529,7 @@ def on_inp(d):
         p.w = 1 if d.get("w") == 1 else 0
         p.sh = bool(d.get("sh")) and p.w == 1  # giữ khiên (chỉ khi cầm kiếm)
         # Client tự dự đoán vị trí (không giật khi ping cao); máy chủ chỉ kiểm tra có hợp lệ không
-        if "x" in d and d.get("ep") == p.ep and p.down <= 0 and r.phase == "play" and not r.paused:
+        if "x" in d and d.get("ep") == p.ep and p.down <= 0 and p.kbt <= 0 and r.phase == "play" and not r.paused:
             nx, ny, now = float(d["x"]), float(d["y"]), time.time()
             dt = min(max(now - p.tpos, 0.05), 2.0) if p.tpos else 0.15
             if math.hypot(nx - p.x, ny - p.y) <= SPEED * 1.3 * dt + 12 and not hit_wall(nx, ny, PR):
@@ -671,7 +672,7 @@ def make_mons(r):
         c = MON[t]
         r.mons.append({"id": len(r.mons), "t": t, "x": x, "y": y, "hx": x, "hy": y, "hp": c["hp"], "mhp": c["hp"],
                        "r": c["r"], "cd": 0.0, "alive": True, "rt": 0.0, "ch": 0.0, "fl": 0.0, "lcd": 2.0, "la": 0.0, "L": 0.0,
-                       "ax": x, "ay": y, "ag": None, "wt": 0.0, "ws": 0.0, "wx": x, "wy": y})
+                       "ax": x, "ay": y, "ag": None, "wt": 0.0, "ws": 0.0, "wx": x, "wy": y, "kbt": 0.0, "kvx": 0.0, "kvy": 0.0, "stun": 0.0})
     for t in (0, 0, 1, 1):
         for _ in range(80):
             x, y = random.uniform(0.15, 0.85) * W, random.uniform(0.15, 0.85) * H
@@ -836,9 +837,18 @@ def mon_step(r):
             mo["rt"] -= DT
             if mo["rt"] <= 0:
                 mo.update(alive=True, hp=mo["mhp"], x=mo["hx"], y=mo["hy"], ch=0.0, fl=0.0, lcd=2.0,
-                          ag=None, wt=0.0, ws=0.0, wx=mo["hx"], wy=mo["hy"])
+                          ag=None, wt=0.0, ws=0.0, wx=mo["hx"], wy=mo["hy"], kbt=0.0, stun=0.0)
             continue
         c = MON[mo["t"]]; mo["cd"] -= DT
+        if mo["stun"] > 0:  # bị kiếm đánh: choáng + trượt lùi, không hành động
+            mo["stun"] -= DT; mo["fl"] = max(0.0, mo["fl"] - DT)
+            if mo["kbt"] > 0:
+                mo["kbt"] -= DT
+                nx = mo["x"] + mo["kvx"] * DT
+                if not hit_wall(nx, mo["y"], mo["r"]): mo["x"] = nx
+                ny = mo["y"] + mo["kvy"] * DT
+                if not hit_wall(mo["x"], ny, mo["r"]): mo["y"] = ny
+            continue
         if mo["t"] == 3:
             laser_step(r, mo)
             tg, bd = guard_step(r, mo, c)
@@ -884,14 +894,46 @@ def orb_step(r):
     r.orbs = keep
 
 
+KB_DIST, KB_T = 110.0, 0.22   # kiếm: đánh bật lùi người chơi 110px trong 0.22s (đồng thời ngắt hành động)
+KB_MON = {0: 120.0, 1: 140.0, 2: 40.0, 3: 60.0}   # quãng bật lùi theo loại quái (golem nặng nên ít lùi)
+KB_STUN = {0: 0.6, 1: 0.6, 2: 0.35, 3: 0.5}       # thời gian quái bị choáng (không đi, không đánh, không nạp laze)
+
+
+def knock_player(r, q, src):
+    """Kiếm trúng người chơi: bật lùi + ngắt hành động (vung kiếm, bắn, cắm/cướp cờ) trong KB_T giây."""
+    d = math.hypot(q.x - src.x, q.y - src.y)
+    a = math.atan2(q.y - src.y, q.x - src.x) if d > 1 else src.a
+    q.kbt = KB_T; q.kvx = math.cos(a) * KB_DIST / KB_T; q.kvy = math.sin(a) * KB_DIST / KB_T
+    q.sw = 0.0; q.fl = False; q.prog = 0.0; q.pf = -1; q.cool = max(q.cool, 0.2)
+    q.ep += 1  # client bỏ vị trí tự dự đoán, theo máy chủ trong lúc bị bật lùi
+
+
+def knock_mon(mo, sx, sy):
+    """Kiếm trúng quái: bật lùi + choáng; thần giữ cờ đang nạp laze bị ngắt ngay."""
+    a = math.atan2(mo["y"] - sy, mo["x"] - sx)
+    mo["kbt"] = KB_T; mo["kvx"] = math.cos(a) * KB_MON[mo["t"]] / KB_T; mo["kvy"] = math.sin(a) * KB_MON[mo["t"]] / KB_T
+    mo["stun"] = KB_STUN[mo["t"]]; mo["cd"] = max(mo["cd"], 0.8)
+    if mo["t"] == 3:
+        mo["ch"] = 0.0; mo["lcd"] = max(mo["lcd"], 1.2)
+
+
 def step(r, live):
     for p in r.players.values():
         if p.down > 0:
-            p.down -= DT; p.fl = False
+            p.down -= DT; p.fl = False; p.kbt = 0.0
             if p.down <= 0:
                 p.hp = p.mhp; p.down = 0; spawn(r, p)
             continue
         if not live:
+            continue
+        if p.kbt > 0:  # đang bị kiếm đánh bật lùi: máy chủ tự di chuyển, bỏ qua mọi hành động
+            nx = p.x + p.kvx * DT
+            if not hit_wall(nx, p.y, PR): p.x = nx
+            ny = p.y + p.kvy * DT
+            if not hit_wall(p.x, ny, PR): p.y = ny
+            p.kbt -= DT; p.fl = False; p.sw = 0.0
+            if p.kbt <= 0:
+                p.kbt = 0.0; p.ep += 1; p.tpos = time.time()
             continue
         if p.bot:
             bot_ai(r, p)
@@ -912,6 +954,8 @@ def step(r, live):
                     ang = abs((math.atan2(mo["y"] - p.y, mo["x"] - p.x) - p.a + math.pi) % (2 * math.pi) - math.pi)
                     if ang < 1.05 or math.hypot(mo["x"] - p.x, mo["y"] - p.y) < PR + mo["r"] + 6:
                         hit_mon(r, mo, p.team, p, SWORD_DMG)
+                        if mo["alive"]:
+                            knock_mon(mo, p.x, p.y)
             for q in r.players.values():
                 if q.team == p.team or q.down > 0:
                     continue
@@ -928,6 +972,8 @@ def step(r, live):
                         q.down = DOWN_S; drop_flag(r, q)
                         r.ev.append(["d", round(q.x), round(q.y), q.team])
                         on_kill(r, q, p.team)
+                    else:
+                        knock_player(r, q, p)
         elif fire and p.cool <= 0 and p.w == 0:
             p.cool = COOL
             r.bullets.append({"x": p.x + math.cos(p.a) * (PR + 3), "y": p.y + math.sin(p.a) * (PR + 3),
@@ -936,7 +982,7 @@ def step(r, live):
     if not live:
         return
     for p in r.players.values():
-        if p.down > 0:
+        if p.down > 0 or p.kbt > 0:
             continue
         if p.carry >= 0:
             bx, by = BASES[p.team]
@@ -1012,7 +1058,7 @@ def send_state(r):
                or any(math.hypot(p.x - s.x, p.y - s.y) < SEE_R for s in seers)]
         ids = {p.pid for p in vis}
         st = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused,
-              "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p))] for p in vis],
+              "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0)] for p in vis],
               "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] if (not f["c"] or f["c"].pid in ids)
                     else [-1, -1, f["c"].pid, -1] for f in r.flags],
               "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid] for b in r.bullets], "ev": evs, "kp": r.kp,
@@ -1024,7 +1070,7 @@ def send_state(r):
     if r.specs:
         everyone = list(r.players.values())
         full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1,
-                "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p))] for p in everyone],
+                "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0)] for p in everyone],
                 "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] for f in r.flags],
                 "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid] for b in r.bullets], "ev": evs, "kp": r.kp,
                 "mo": [[mo["id"], mo["t"], round(mo["x"]), round(mo["y"]), mo["hp"], round(mo["ch"], 2), round(mo["la"], 2), round(mo["fl"], 2), round(mo["L"])]
