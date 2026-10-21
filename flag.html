@@ -53,16 +53,13 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 .cf{position:absolute;inset:0;overflow:hidden;pointer-events:none}.cf i{position:absolute;top:-40px;font-style:normal;animation:cf linear infinite}@keyframes cf{to{transform:translateY(115vh) rotate(540deg)}}
 .big{font-size:clamp(20px,4.6vw,30px);margin:4px 0 8px}.mvp{background:#fff3b0;border:3px solid var(--ink);border-radius:12px;padding:5px 8px;margin:6px 0;font-size:14px}
 /* ===== SẢNH: nền ảnh + luôn hiển thị ngang ===== */
-:root{--u:1vh}
-@media (orientation:portrait){body:not(.ing){--u:1vw}body:not(.ing) .shell *{touch-action:none!important}}
 .shell{display:contents}
-@media (orientation:portrait){body:not(.ing) .shell{display:block;position:fixed;left:0;top:0;width:100vh;width:100dvh;height:100vw;height:100dvw;transform-origin:0 0;transform:rotate(90deg) translateY(-100%);overflow:hidden}}
 .bgs{background:#7ab356 url(/img/background.jpg) center 22%/cover no-repeat;touch-action:pan-x pan-y}
 .lob{overflow:hidden;padding:0}
-.dock{position:absolute;left:50%;transform:translateX(-50%);top:calc(var(--u)*23);bottom:max(8px,calc(var(--u)*1.6));width:min(920px,calc(100% - 20px));display:grid;grid-template-columns:5fr 6fr;gap:10px}
+.dock{position:absolute;left:50%;transform:translateX(-50%);top:23vh;bottom:max(8px,1.6vh);width:min(920px,calc(100% - 20px));display:grid;grid-template-columns:5fr 6fr;gap:10px}
 .gl{min-height:0;overflow:auto;touch-action:pan-x pan-y;overscroll-behavior:contain;display:flex;flex-direction:column;gap:8px;padding:8px;border-radius:20px;background:rgba(255,255,255,.28);border:3px solid rgba(255,255,255,.75);box-shadow:0 6px 24px rgba(10,30,80,.35);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .gl .card{margin:0;max-width:none;background:rgba(255,255,255,.93);padding:9px 11px}
-.gl h2{font-size:clamp(14px,calc(var(--u)*2.4),18px)}
+.gl h2{font-size:clamp(14px,2.4vh,18px)}
 .gl .row{margin:4px 0}
 .gl .grow{flex:1;min-height:120px;display:flex;flex-direction:column}
 .gl #rooms{flex:1;min-height:0;overflow:auto;touch-action:pan-x pan-y}
@@ -70,13 +67,20 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 .fsb{position:absolute;right:max(10px,env(safe-area-inset-right));top:10px;width:42px;height:42px;padding:0;display:grid;place-items:center;font-size:18px;z-index:3}
 .vbar{position:absolute;left:50%;top:8px;transform:translateX(-50%);z-index:3;max-width:80%;margin:0}
 .gl details{font-size:12px}.gl summary{cursor:pointer;font-weight:800}
-.rsc{padding-top:calc(var(--u)*23)}
+.rsc{padding-top:23vh}
 .rsc .card{background:rgba(255,255,255,.94);max-width:760px}
-@media (max-height:460px) and (orientation:landscape),(max-width:460px) and (orientation:portrait){
+@media (max-height:460px){
  .gl{gap:5px;padding:6px;border-width:2px}.gl .card{padding:6px 9px;border-radius:14px;box-shadow:0 3px 0 var(--ink)}
  .btn{padding:5px 11px}input,select{padding:5px 8px}.tm{min-height:90px}.rsc .card{padding:8px}
 }
 @media (max-width:700px){.dock{grid-template-columns:1fr 1fr;gap:6px}}
+/* ===== Màn chắn: sảnh/phòng chỉ dùng khi ngang ===== */
+#gate{position:fixed;inset:0;z-index:90;display:none;place-items:center;padding:16px;background:#7ab356 url(/img/background.jpg) 30% 20%/cover no-repeat;touch-action:none}
+#gate:before{content:"";position:absolute;inset:0;background:rgba(20,48,107,.55)}
+#gate .card{position:relative;max-width:360px;text-align:center;margin:0}
+#gate .ph{font-size:64px;display:inline-block;animation:gr 2.4s ease-in-out infinite}
+@keyframes gr{0%,25%{transform:rotate(0)}60%,100%{transform:rotate(-90deg)}}
+@media (orientation:portrait){body:not(.ing) #gate{display:grid}}
 </style></head><body>
 
 <div class="shell">
@@ -118,6 +122,10 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 
 </div><!-- /.shell -->
 
+<div id="gate"><div class="card"><div class="ph">📱</div><h2 style="margin-top:6px">Hãy xoay ngang màn hình</h2>
+ <p style="margin:6px 0 12px">Game chơi tốt nhất ở chế độ ngang. Xoay điện thoại, hoặc bấm nút bên dưới để phóng to và tự khoá chiều ngang.</p>
+ <button class="btn pri" id="gfs">⛶ Phóng to toàn màn hình</button>
+ <div><small id="gnote" class="hide">Trình duyệt này không hỗ trợ phóng to. Trên iPhone: Chia sẻ → Thêm vào Màn hình chính, hoặc tắt Khoá xoay dọc rồi xoay máy.</small></div></div></div>
 <div id="game" class="hide"><canvas id="cv"></canvas><canvas id="mm"></canvas>
  <div id="hud"><div class="pill" id="pill" title="Bảng thống kê"><span id="hr"></span><span id="ht">3:00</span><span id="hs"></span><span>📊</span></div><div id="q"></div></div>
  <div id="tb"><button class="btn" id="bfs" title="Toàn màn hình">⛶</button><button class="btn" id="bmu" title="Âm thanh">🔊</button><button class="btn" id="bpz" title="Tạm dừng (P)">⏸</button><button class="btn dng" id="bex" title="Thoát">✖</button></div>
@@ -649,17 +657,10 @@ $('#dice').onclick=()=>{const W1=['Sói','Hổ','Rồng','Cáo','Gấu','Thỏ',
  el.value=n;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))};
 </script>
 <script>
-/* Sảnh bị xoay 90° khi cầm dọc: tự ánh xạ cử chỉ vuốt sang trục đã xoay */
-(function(){
- const rot=()=>matchMedia('(orientation:portrait)').matches&&!document.body.classList.contains('ing');
- let sx=0,sy=0,tg=null,mv=false;
- function sc(el,ax){for(;el&&el!==document.body;el=el.parentElement){const s=getComputedStyle(el);
-  if(ax==='y'&&/(auto|scroll)/.test(s.overflowY)&&el.scrollHeight>el.clientHeight+1)return el;
-  if(ax==='x'&&/(auto|scroll)/.test(s.overflowX)&&el.scrollWidth>el.clientWidth+1)return el}return null}
- document.addEventListener('touchstart',e=>{if(!rot()||e.touches.length!==1){tg=null;return}const t=e.touches[0];sx=t.clientX;sy=t.clientY;tg=e.target;mv=false},{passive:true});
- document.addEventListener('touchmove',e=>{if(!tg||!rot())return;const t=e.touches[0],dx=t.clientX-sx,dy=t.clientY-sy;
-  if(!mv&&Math.hypot(dx,dy)<8)return;mv=true;sx=t.clientX;sy=t.clientY;
-  const a=sc(tg,'y'),b=sc(tg,'x');if(a)a.scrollTop+=dx;if(b)b.scrollLeft-=dy;e.preventDefault()},{passive:false});
-})();
+/* Nút phóng to trên màn chắn: vào toàn màn hình rồi khoá chiều ngang */
+$('#gfs').onclick=()=>{const d=document,e=d.documentElement,f=e.requestFullscreen||e.webkitRequestFullscreen,lock=()=>{try{screen.orientation.lock('landscape').catch(()=>$('#gnote').classList.remove('hide'))}catch(_){$('#gnote').classList.remove('hide')}};
+ if(d.fullscreenElement||d.webkitFullscreenElement){lock();return}
+ if(!f){$('#gnote').classList.remove('hide');return}
+ Promise.resolve(f.call(e)).then(lock).catch(()=>$('#gnote').classList.remove('hide'))};
 </script>
 </body></html>
