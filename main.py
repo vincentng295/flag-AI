@@ -365,7 +365,7 @@ def _disc():
     with LOCK:
         sid = request.sid
         r = SID_ROOM.get(sid); p = r.players.get(sid) if r else None
-        TOK.pop(sid, None)
+        TOK.pop(sid, None); CHAT_LAST.pop(sid, None)
         if p and not p.bot and p.tok and r.state == "playing" and REJOIN_S > 0 and not r.dead:
             # đang giữa trận: giữ chỗ REJOIN_S giây để học sinh vào lại (nhân vật đứng yên)
             p.away = True; p.awayAt = time.time(); p.dx = p.dy = 0.0; p.fire = p.fl = p.sh = False
@@ -620,6 +620,37 @@ def on_drop():
             drop_flag(r, p)
             p.nopick = time.time() + 1.5
             r.ev.append(["p", round(p.x), round(p.y), p.team])
+
+
+# ---------- chat: kênh đội ("t") và kênh cả map ("a") ----------
+CHAT_MAX, CHAT_GAP = 120, 0.6   # độ dài tối đa / giãn cách tối thiểu giữa 2 tin của một người (giây)
+CHAT_LAST = {}
+
+
+@sio.on("chat")
+def on_chat(d):
+    sid = request.sid
+    if not isinstance(d, dict):
+        return
+    m = " ".join(clean(d.get("m"), CHAT_MAX).split())
+    now = time.time()
+    if not m or now - CHAT_LAST.get(sid, 0.0) < CHAT_GAP:
+        return
+    CHAT_LAST[sid] = now
+    with LOCK:
+        r = SID_ROOM.get(sid)
+        p = (r.players.get(sid) or r.specs.get(sid)) if r else None
+        if not p:
+            return
+        ch = "t" if d.get("ch") == "t" else "a"
+        msg = {"pid": p.pid, "nick": p.nick, "team": p.team, "ch": ch, "m": m}
+        if ch == "a":
+            sio.emit("chat", msg, to=r.code)
+        else:  # kênh đội: chỉ đồng đội (khán giả chat với nhau)
+            group = r.specs.values() if p.team < 0 else r.players.values()
+            for q in list(group):
+                if q.team == p.team and not q.bot and not q.away:
+                    _emit_safe("chat", msg, q.sid)
 
 
 @sio.on("inp")
