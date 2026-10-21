@@ -42,6 +42,11 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 #rot{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);background:#fff8c4;border:2px solid var(--ink);border-radius:12px;padding:3px 10px;font-size:12px;display:none;pointer-events:none}
 @media (orientation:portrait){#rot{display:block}}
 #spb{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);z-index:4;display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:94vw;align-items:center}#spb small{background:#fff;border:2px solid #14306b;border-radius:10px;padding:2px 8px;font-weight:700}.spec .cb,.spec #bdr,.spec #bcfg{display:none!important}
+#pill{pointer-events:auto;cursor:pointer}
+#feed{position:absolute;left:max(8px,env(safe-area-inset-left));top:calc(max(8px,env(safe-area-inset-top)) + 50px);display:flex;flex-direction:column;gap:3px;max-width:min(380px,48vw);pointer-events:none;z-index:3}
+.fi{background:rgba(255,255,255,.88);color:var(--ink);border-radius:8px;padding:2px 8px;font-size:clamp(11px,2.1vw,14px);line-height:1.3;animation:fi 8s forwards}
+@keyframes fi{0%{opacity:0;transform:translateX(-14px)}4%{opacity:1;transform:none}85%{opacity:1}100%{opacity:0}}
+.stt{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px}.stt th,.stt td{padding:3px 5px;text-align:center;border-bottom:1px solid #d6dbe6}.stt th:first-child,.stt td:first-child{text-align:left}.stt thead th{color:#fff}.stt tr.me td{background:#fff3b0;font-weight:800}.stt tfoot td{font-weight:800;border-top:2px solid var(--ink)}
 .mdl{position:fixed;inset:0;background:rgba(20,48,107,.55);display:grid;place-items:center;padding:12px;z-index:40;touch-action:pan-y;overflow:auto}.mdl .card{width:100%;margin:0}.mdl label{display:block;font-size:13px;margin:6px 0 2px}.tag{display:inline-block;background:#ffe27a;border:2px solid var(--ink);border-radius:8px;padding:0 6px;font-size:12px;margin-right:4px}
 </style></head><body>
 
@@ -74,10 +79,11 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 </div>
 
 <div id="game" class="hide"><canvas id="cv"></canvas><canvas id="mm"></canvas>
- <div id="hud"><div class="pill"><span id="hr"></span><span id="ht">3:00</span><span id="hs"></span></div><div id="q"></div></div>
+ <div id="hud"><div class="pill" id="pill" title="Bảng thống kê"><span id="hr"></span><span id="ht">3:00</span><span id="hs"></span><span>📊</span></div><div id="q"></div></div>
  <div id="tb"><button class="btn" id="bfs" title="Toàn màn hình">⛶</button><button class="btn" id="bmu" title="Âm thanh">🔊</button><button class="btn" id="bpz" title="Tạm dừng (P)">⏸</button><button class="btn dng" id="bex" title="Thoát">✖</button></div>
- <div id="banner"></div><div id="rot">Xoay ngang màn hình để chơi tốt hơn</div>
+ <div id="feed"></div><div id="banner"></div><div id="rot">Xoay ngang màn hình để chơi tốt hơn</div>
  <div id="ov" class="hide"></div><div id="pz" class="hide"></div></div>
+<div id="stm" class="mdl hide"><div class="card" style="max-width:540px"><h2>📊 Bảng thống kê</h2><div id="stb"></div><div class="row" style="justify-content:center"><button class="btn pri" id="stc">Đóng</button></div></div></div>
 <div id="toast" class="hide"></div>
 <div id="rj" class="mdl hide"><div class="card" style="max-width:380px;text-align:center"><h2>🔄 Đang kết nối lại trận đấu...</h2><small>Bạn vừa thoát khỏi trận. Đang quay lại trận cũ.</small><div class="row" style="margin-top:12px;justify-content:center"><button class="btn dng" id="brjc">Huỷ kết nối lại</button></div></div></div>
 
@@ -165,9 +171,9 @@ function start(V){
   if(!TER||TER.W!==M.W)buildWorld();show('game');fsEnter();resize();AU.bpm=140;musicStart();duck(false);
   $('#hr').textContent=`Round ${d.i+1}/${d.n}`;
   $('#q').innerHTML=`<div>${esc(d.q.question)}</div>`+d.q.options.map((o,i)=>`<div class="o"><b style="background:${FC[i]}">${L[i]}</b><span>${esc(o)}</span></div>`).join('');
-  banner(`ROUND ${d.i+1}`);sfx('go')});
+  $('#feed').innerHTML='';banner(`ROUND ${d.i+1}`);sfx('go')});
  sock.on('st',s=>{S=s;for(const p of s.p){const d=disp[p[0]]||(disp[p[0]]={x:p[2],y:p[3]});d.tx=p[2];d.ty=p[3]}
-  for(const e of s.ev||[]){if((e[0]==='s'||e[0]==='m')&&e[4]===pid&&!isSpec())continue;sfx(e[0],e[1],e[2])}
+  if(s.ps){PS=s.ps;if(statsOpen())renderStats()}for(const e of s.ev||[]){if(e[0]==='nf'||e[0]==='nk'){feedEv(e);continue}if(e[0]==='pl'&&!isSpec()&&e[3]===myTeam())banner('HÃY BẢO VỆ LÁ CỜ!');if((e[0]==='s'||e[0]==='m')&&e[4]===pid&&!isSpec())continue;sfx(e[0],e[1],e[2])}
   if(!aInit&&!isSpec()){const m=s.p.find(q=>q[0]===pid);if(m){inp.a=m[4];aInit=true}}
   const t=Math.max(0,Math.ceil(s.tl));$('#ht').textContent=s.ph==='read'?'📖 Đọc đề '+t:`${Math.floor(t/60)}:${String(t%60).padStart(2,'0')}`;
   $('#hs').innerHTML=`<span style="color:${TC[0]}">🔵 ${s.tot[0]}${s.kp[0]?` <small>+${s.kp[0]}</small>`:''}</span> <span style="color:${TC[1]}">🔴 ${s.tot[1]}${s.kp[1]?` <small>+${s.kp[1]}</small>`:''}</span>`;
@@ -178,12 +184,12 @@ function start(V){
   let h=`<div class="card"><h2>⏱ Hết giờ! Đáp án đúng: <span style="color:${FC[r.ok]}">${L[r.ok]}</span></h2>`;
   if(r.explanation)h+=`<div>${esc(r.explanation)}</div>`;
   for(const t of [0,1]){const fl=r.planted.filter(x=>x[1]===t);h+=`<div class="row"><b style="color:${TC[t]}">Đội ${TN[t]}</b><span>${fl.length?fl.map(x=>`${L[x[0]]} ${x[0]===r.ok?'✅':'❌'}`).join(' · '):'không cắm cờ nào'}</span><b>${r.delta[t]>=0?'+':''}${r.delta[t]} → ${r.tot[t]}</b></div>`}
-  h+=`<small>${r.last?'Hết trận, chờ kết quả...':'Round tiếp theo sắp bắt đầu...'}</small></div>`;$('#ov').innerHTML=h;$('#ov').classList.remove('hide')});
+  h+=`<button class="btn" id="bstr" style="margin:6px 0">📊 Thống kê</button><br><small>${r.last?'Hết trận, chờ kết quả...':'Round tiếp theo sắp bắt đầu...'}</small></div>`;$('#ov').innerHTML=h;$('#ov').classList.remove('hide');$('#bstr').onclick=openStats});
  sock.on('end',d=>{clearLast();inGame=false;musicStop();const me=myTeam(),dr=d.tot[0]===d.tot[1];const win=!dr&&(d.tot[0]>d.tot[1]?0:1)===me;
   if(!d.aborted)sfx(dr||isSpec()?'pl':win?'win':'lose');
   const w=dr?'Hoà nhau!':`Đội ${TN[d.tot[0]>d.tot[1]?0:1]} thắng! 🏆`;
-  $('#pz').classList.add('hide');$('#ov').innerHTML=`<div class="card"><h2>${d.aborted?'Trận bị dừng (thiếu người)':w}</h2><div class="row"><b style="color:${TC[0]}">🔵 ${d.tot[0]}</b><b style="color:${TC[1]}">🔴 ${d.tot[1]}</b></div><button class="btn pri" id="bback">Về phòng chờ</button></div>`;
-  $('#ov').classList.remove('hide');$('#bback').onclick=()=>{$('#ov').classList.add('hide');show('roomscr');if(room)drawRoom()}});
+  $('#pz').classList.add('hide');$('#ov').innerHTML=`<div class="card"><h2>${d.aborted?'Trận bị dừng (thiếu người)':w}</h2><div class="row"><b style="color:${TC[0]}">🔵 ${d.tot[0]}</b><b style="color:${TC[1]}">🔴 ${d.tot[1]}</b></div><button class="btn" id="bstr">📊 Thống kê</button> <button class="btn pri" id="bback">Về phòng chờ</button></div>`;
+  $('#ov').classList.remove('hide');$('#bstr').onclick=openStats;$('#bback').onclick=()=>{$('#ov').classList.add('hide');show('roomscr');if(room)drawRoom()}});
  $('#bcreate').onclick=()=>{sock.emit('create',{nick:nick(),name:$('#rname').value,pw:$('#rpw').value,size:$('#rsize').value,rounds:$('#rrounds').value,pve:$('#rmode').value==='pve'});closeModal()};
  $('#bopen').onclick=()=>$('#modal').classList.remove('hide');$('#bmcancel').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};
  $('#bq').onclick=()=>{sock.emit('queue',{nick:nick(),size:$('#qsize').value});$('#qidle').classList.add('hide');$('#qwait').classList.remove('hide');$('#qtxt').textContent='Đang tìm trận...'};
@@ -527,5 +533,35 @@ function autoAim(me,a){
  addEventListener('pagehide',()=>resetCtl(true));addEventListener('blur',()=>resetCtl(true));
  document.addEventListener('visibilitychange',()=>{if(document.hidden)resetCtl(true)});
 })();
+</script>
+<script>
+/* Bảng thống kê (bấm vào thanh điểm) + bảng thông báo bên trái */
+var PS=[],_stT=0;
+function statsOpen(){return !$('#stm').classList.contains('hide')}
+function openStats(){$('#stm').classList.remove('hide');renderStats(true)}
+function closeStats(){$('#stm').classList.add('hide')}
+function renderStats(force){const now=Date.now();if(!force&&now-_stT<400)return;_stT=now;
+ const ps={};for(const x of PS)ps[x[0]]={s:x[1],k:x[2],d:x[3]};let h='';
+ for(const t of [0,1]){
+  const rows=Object.values(names||{}).filter(n=>n.team===t).map(n=>Object.assign({n},ps[n.pid]||{s:0,k:0,d:0})).sort((a,b)=>b.s-a.s||b.k-a.k||a.d-b.d);
+  let ts=0,tk=0,td=0;
+  h+=`<table class="stt"><thead><tr style="background:${TC[t]}"><th>${t?'🔴':'🔵'} Đội ${TN[t]}</th><th>Điểm</th><th>Kill</th><th>Defeat</th><th>K/D</th></tr></thead><tbody>`;
+  for(const r of rows){ts+=r.s;tk+=r.k;td+=r.d;h+=`<tr${r.n.pid===pid?' class="me"':''}><td>${esc(r.n.nick)}</td><td>${r.s}</td><td>${r.k}</td><td>${r.d}</td><td>${(r.k/Math.max(1,r.d)).toFixed(2)}</td></tr>`}
+  if(!rows.length)h+='<tr><td colspan="5">—</td></tr>';
+  h+=`</tbody><tfoot><tr><td>Tổng</td><td>${ts}</td><td>${tk}</td><td>${td}</td><td>${(tk/Math.max(1,td)).toFixed(2)}</td></tr></tfoot></table>`}
+ $('#stb').innerHTML=h}
+$('#pill').addEventListener('click',openStats);$('#stc').onclick=closeStats;
+$('#stm').addEventListener('click',e=>{if(e.target.id==='stm')closeStats()});
+addEventListener('keydown',e=>{if(e.code==='Escape'&&statsOpen()){closeStats();e.stopImmediatePropagation();e.preventDefault()}},true);
+function feedAdd(html){const f=$('#feed'),d=document.createElement('div');d.className='fi';d.innerHTML=html;f.appendChild(d);while(f.children.length>6)f.firstChild.remove();setTimeout(()=>d.remove(),8000)}
+function feedNm(p){const n=names&&names[p];return n?`<b style="color:${TC[n.team]}">${esc(n.nick)}</b>`:'<b>?</b>'}
+function feedFl(k){return `<b style="color:${FC[k]}">${L[k]}</b>`}
+function feedEv(e){
+ if(e[0]==='nf'){const k=e[1];
+  if(k===0)feedAdd(`${feedNm(e[2])} đã lấy lá cờ đáp án ${feedFl(e[3])}`);
+  else if(k===1)feedAdd(`${feedNm(e[2])} đã cướp lá cờ đáp án ${feedFl(e[3])} khỏi team ${TN[e[4]].toLowerCase()}`);
+  else if(k===2)feedAdd(`${feedNm(e[2])} đã cắm lá cờ đáp án ${feedFl(e[3])} ở căn cứ`);
+  else feedAdd(`${feedNm(e[2])} đã thả lá cờ đáp án ${feedFl(e[3])}`)}
+ else feedAdd(e[2]>=0?`${feedNm(e[1])} đã bị đánh bại bởi ${feedNm(e[2])}`:`${feedNm(e[1])} đã bị đánh bại bởi <b>quái vật</b>`)}
 </script>
 </body></html>

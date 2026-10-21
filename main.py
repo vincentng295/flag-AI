@@ -225,6 +225,7 @@ class P:
         s.ep = 0; s.tpos = 0.0  # ep: số lần máy chủ ép vị trí; tpos: lúc nhận vị trí client gần nhất
         s.g = 0; s.w = 0  # g: 0 nam/1 nữ; w: 0 súng bóng nước/1 kiếm nhựa
         s.bot = False; s.ai = {}
+        s.score = s.kills = s.deaths = 0  # thống kê cả trận: điểm cá nhân (hạ người/quái), số lần hạ, số lần bị hạ
         s.tok = ""; s.away = False; s.awayAt = 0.0  # tok: token trình duyệt; away: đang mất kết nối, chờ vào lại
         s.reset()
 
@@ -555,6 +556,7 @@ def on_drop():
         r = SID_ROOM.get(request.sid)
         p = r.players.get(request.sid) if r else None
         if p and p.carry >= 0 and p.down <= 0 and r.phase == "play" and not r.paused:
+            r.ev.append(["nf", 3, p.pid, r.flags[p.carry]["letter"], -1])
             drop_flag(r, p)
             p.nopick = time.time() + 1.5
             r.ev.append(["p", round(p.x), round(p.y), p.team])
@@ -638,7 +640,9 @@ def bot_ai(r, p):
     if home:
         dest = BASES[p.team]
     else:
-        cands = [f for f in r.flags if f["c"] is None and f["planted"] != p.team]
+        q = getattr(r, "q", None)  # bot "biết" đáp án: chỉ đi lấy/cướp lá cờ đúng, và chỉ khi đội chưa có cờ
+        ok = q["ok"] if q else -1
+        cands = [] if team_has_flag(r, p.team) else [f for f in r.flags if f["c"] is None and f["planted"] != p.team and f["letter"] == ok]
         if carriers:
             c = min(carriers, key=lambda q: math.hypot(q.x - p.x, q.y - p.y))
             dest = (c.x, c.y)
@@ -704,8 +708,10 @@ def drop_flag(r, p):
 
 
 def take(r, p, k, f):
+    was = f["planted"]  # >= 0: lá cờ đang cắm ở căn cứ của đội đó (bị cướp)
     p.carry = k; f["c"] = p; f["planted"] = -1; p.prog = 0.0; p.pf = -1
     r.ev.append(["p", round(p.x), round(p.y), p.team])
+    r.ev.append(["nf", 1 if was >= 0 else 0, p.pid, f["letter"], was])
 
 
 MON = {0: dict(hp=3, sp=70, r=14, dmg=1, pts=10, exp=(1, 2), heal=0.12, rt=25),    # slime
@@ -790,6 +796,24 @@ def on_kill(r, victim, team):
         drop_orb(r, victim.x, victim.y, 1)
 
 
+def team_has_flag(r, team):
+    """Mỗi đội chỉ được mang về 1 lá cờ: đội đã cắm cờ ở căn cứ, hoặc đang có đồng đội vác cờ, thì không nhặt thêm cờ khác."""
+    return any(f["planted"] == team or (f["c"] is not None and f["c"].team == team) for f in r.flags)
+
+
+def defeat(r, victim, killer=None):
+    """Một người bị hạ (hết máu): đóng băng, rớt cờ, ghi thống kê và thông báo. killer=None nghĩa là do quái vật/laze."""
+    if victim.down > 0:
+        return
+    victim.down = DOWN_S; drop_flag(r, victim)
+    r.ev.append(["d", round(victim.x), round(victim.y), victim.team])
+    victim.deaths += 1
+    r.ev.append(["nk", victim.pid, killer.pid if killer is not None else -1])
+    if killer is not None:
+        killer.kills += 1; killer.score += PTS_KILL
+        on_kill(r, victim, killer.team)
+
+
 def shielding(p):
     return p.sh and p.w == 1 and p.down <= 0
 
@@ -815,6 +839,8 @@ def hit_mon(r, mo, team, by=None, dmg=1):
     c = MON[mo["t"]]
     mo["alive"] = False; mo["rt"] = c["rt"]
     r.kp[team] += c["pts"]
+    if by is not None:
+        by.score += c["pts"]
     for _ in range(random.randint(3, 4) if mo["t"] >= 2 else random.randint(1, 2)):
         drop_orb(r, mo["x"], mo["y"], 0, random.randint(*c["exp"]))
     if random.random() < c["heal"]:
@@ -854,8 +880,7 @@ def laser_step(r, mo):
                     p.hp -= LASER_DMG
                     r.ev.append(["h", round(p.x), round(p.y), p.team])
                     if p.hp <= 0:
-                        p.down = DOWN_S; drop_flag(r, p)
-                        r.ev.append(["d", round(p.x), round(p.y), p.team])
+                        defeat(r, p)
     mo["ch"] = ch
 
 
@@ -974,8 +999,7 @@ def mon_step(r):
             tg.hp -= c["dmg"]
             r.ev.append(["h", round(tg.x), round(tg.y), tg.team])
             if tg.hp <= 0:
-                tg.down = DOWN_S; drop_flag(r, tg)
-                r.ev.append(["d", round(tg.x), round(tg.y), tg.team])
+                defeat(r, tg)
 
 
 def orb_step(r):
@@ -1070,9 +1094,7 @@ def step(r, live):
                     q.hp -= SWORD_DMG
                     r.ev.append(["h", round(q.x), round(q.y), q.team])
                     if q.hp <= 0:
-                        q.down = DOWN_S; drop_flag(r, q)
-                        r.ev.append(["d", round(q.x), round(q.y), q.team])
-                        on_kill(r, q, p.team)
+                        defeat(r, q, p)
                     else:
                         knock_player(r, q, p)
         elif fire and p.cool <= 0 and p.w == 0:
@@ -1096,13 +1118,15 @@ def step(r, live):
                     f["c"] = None; f["planted"] = p.team; f["slot"] = slot
                     f["x"] = bx + (1 if p.team == 0 else -1) * 1.5 * T; f["y"] = by + (slot - 1.5) * 1.1 * T
                     r.ev.append(["pl", round(f["x"]), round(f["y"]), p.team])
+                    r.ev.append(["nf", 2, p.pid, f["letter"], p.team])
                     p.carry = -1; p.prog = 0.0
             else:
                 p.prog = 0.0
             continue
         tgt = -1
+        has_flag = team_has_flag(r, p.team)  # đội đã có cờ (đã cắm hoặc đồng đội đang vác) thì không nhặt thêm
         for k, f in enumerate(r.flags):
-            if f["c"] is None and f["planted"] != p.team and time.time() >= p.nopick and math.hypot(p.x - f["x"], p.y - f["y"]) < 30:
+            if not has_flag and f["c"] is None and f["planted"] != p.team and time.time() >= p.nopick and math.hypot(p.x - f["x"], p.y - f["y"]) < 30:
                 tgt = k; break
         if tgt < 0:
             p.prog = 0.0; p.pf = -1
@@ -1137,9 +1161,7 @@ def step(r, live):
             hit.hp -= 1
             r.ev.append(["h", round(hit.x), round(hit.y), hit.team])
             if hit.hp <= 0:
-                hit.down = DOWN_S; drop_flag(r, hit)
-                r.ev.append(["d", round(hit.x), round(hit.y), hit.team])
-                on_kill(r, hit, b["t"])
+                defeat(r, hit, b["o"])
             continue
         keep.append(b)
     r.bullets = keep
@@ -1171,7 +1193,8 @@ def send_state(r):
                     else [-1, -1, f["c"].pid, -1] for f in r.flags],
               "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid] for b in r.bullets], "ev": evs, "kp": r.kp,
               "mo": [mon_pack(mo) for mo in r.mons if mo["alive"]],
-              "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs]}
+              "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs],
+              "ps": [[q.pid, q.score, q.kills, q.deaths] for q in list(r.players.values())]}
         for p in team:
             _emit_safe("st", st, p.sid)
     if r.specs:
@@ -1181,7 +1204,8 @@ def send_state(r):
                 "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] for f in r.flags],
                 "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid] for b in r.bullets], "ev": evs, "kp": r.kp,
                 "mo": [mon_pack(mo) for mo in r.mons if mo["alive"]],
-                "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs]}
+                "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs],
+              "ps": [[q.pid, q.score, q.kills, q.deaths] for q in list(r.players.values())]}
         for p in list(r.specs.values()):
             _emit_safe("st", full, p.sid)
 
@@ -1313,6 +1337,8 @@ def _run_match(r):
         remove_bots(r)
         if r.pve:
             add_bots(r)
+        for q in r.players.values():
+            q.score = q.kills = q.deaths = 0
         sio.emit("room", info(r), to=r.code)
     for i in range(r.rounds):
         if not play_round(r, i):

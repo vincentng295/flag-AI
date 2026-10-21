@@ -4,7 +4,7 @@
 
 Game chiến thuật đồng đội **1v1 → 5v5** chạy trên trình duyệt (điện thoại hoặc máy tính). Hai đội **Xanh** và **Đỏ** tranh nhau các lá cờ ghi đáp án A/B/C/D của một câu hỏi, rồi mang về căn cứ của mình để cắm. Hết giờ mới chấm: cờ nằm ở căn cứ đội nào thì đội đó được cộng hoặc trừ điểm.
 
-Có hai chế độ phòng: **PvP** (hai đội người chơi) và **PvE** (đội Xanh là người, đội Đỏ do máy điều khiển với số bot bằng số người đội Xanh). Người vào sau khi phòng đầy có thể **xem trận** với tư cách khán giả.
+Có hai chế độ phòng: **PvP** (hai đội người chơi) và **PvE** (đội Xanh là người, đội Đỏ do máy điều khiển với số bot bằng số người đội Xanh). Bot trong PvE **biết đáp án**: chỉ đi lấy hoặc cướp lá cờ đúng, rồi về cắm và ở lại giữ căn cứ. Người vào sau khi phòng đầy có thể **xem trận** với tư cách khán giả.
 
 ## Nhân vật và vũ khí
 
@@ -37,14 +37,25 @@ Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần gi
 
 1. Mỗi round 3 phút: 10 giây đọc đề, 170 giây tranh cờ, rồi xem kết quả.
 2. Mỗi cờ ứng với một đáp án. **Trong lúc chơi không ai biết cờ nào đúng.**
-3. Nhặt cờ, vác về căn cứ và đứng yên cho thanh tiến trình đầy để cắm. Cờ đã cắm ở căn cứ đối phương vẫn cướp được bằng cách đứng cạnh cờ cho thanh tiến trình đầy (khoảng 2.5 giây), nhưng phải vượt qua hiệp sĩ canh ở đó.
+3. Nhặt cờ, vác về căn cứ và đứng yên cho thanh tiến trình đầy để cắm. Khi cắm xong, đội đó thấy thông báo **"HÃY BẢO VỆ LÁ CỜ!"**.
+   - **Mỗi đội chỉ được mang về 1 lá cờ:** đội đã cắm cờ, hoặc đang có đồng đội vác cờ, thì không nhặt thêm cờ khác được.
+   - Cờ đã cắm ở căn cứ đối phương vẫn cướp được bằng cách đứng cạnh cờ cho thanh tiến trình đầy (khoảng 2.5 giây), nhưng phải vượt qua hiệp sĩ canh ở đó. Bị cướp mất cờ thì đội đó được nhặt cờ khác.
 4. Hết giờ, đội giữ cờ ở căn cứ: đáp án đúng **+100**, sai **−50**.
 5. Bản đồ có 2 căn cứ ở 2 góc, 3 đường, sông chéo (đi chậm), rừng và bụi cỏ (núp, địch không thấy).
-6. Người chơi mất kết nối giữa trận được giữ chỗ 90 giây để vào lại (đổi bằng `REJOIN_SECONDS`).
+6. **Thông báo bên trái màn hình** cho cả hai đội và khán giả, ví dụ:
+   - `X đã lấy lá cờ đáp án A`
+   - `Y đã cướp lá cờ đáp án B khỏi team đỏ`
+   - `X đã cắm lá cờ đáp án A ở căn cứ`, `X đã thả lá cờ đáp án A`
+   - `Z đã bị đánh bại bởi Y`
+   - `Y đã bị đánh bại bởi quái vật` (quái thường, hiệp sĩ hoặc laze của thần giữ cờ)
+7. **Bảng thống kê:** bấm vào thanh điểm ở giữa phía trên màn hình (có biểu tượng 📊) để mở bảng tên người chơi từng đội với **Điểm, Kill, Defeat, K/D**. Bảng cũng có ở màn hình kết quả mỗi round và cuối trận (nút 📊 Thống kê). Số liệu tính cả trận và reset khi bắt đầu trận mới:
+   - **Điểm:** điểm cá nhân từ hạ đối thủ (`POINTS_KILL`) và hạ quái (slime, dơi, hiệp sĩ, Golem, thần giữ cờ). Không gồm điểm cờ, vì điểm cờ tính cho cả đội.
+   - **Kill:** số đối thủ đã hạ. **Defeat:** số lần bị hạ (kể cả bởi quái). **K/D:** Kill chia Defeat (Defeat = 0 thì chia cho 1).
+8. Người chơi mất kết nối giữa trận được giữ chỗ 90 giây để vào lại (đổi bằng `REJOIN_SECONDS`).
 
 **Điều khiển**
 
-- Máy tính: `W A S D` hoặc phím mũi tên để di chuyển, chuột để ngắm, `Space` hoặc bấm chuột trái để tấn công, `E` / `Q` để đổi vũ khí, **giữ chuột phải hoặc `Shift` để giơ khiên** (khi cầm kiếm), `F` để thả cờ, `P` hoặc `Esc` để tạm dừng, `M` để tắt/bật âm thanh.
+- Máy tính: `W A S D` hoặc phím mũi tên để di chuyển, chuột để ngắm, `Space` hoặc bấm chuột trái để tấn công, `E` / `Q` để đổi vũ khí, **giữ chuột phải hoặc `Shift` để giơ khiên** (khi cầm kiếm), `F` để thả cờ, `P` hoặc `Esc` để tạm dừng, `M` để tắt/bật âm thanh, bấm thanh điểm để xem thống kê (`Esc` để đóng).
 - Điện thoại: cần trái để di chuyển, cần phải để ngắm và tự bắn, nút 🔫/🗡️ để đổi vũ khí, nút 🛡️ (kéo/giữ) để giơ khiên, nút 🏳️ (chỉ hiện khi đang vác cờ) để thả cờ. Nên xoay ngang màn hình. Vị trí các nút có thể kéo chỉnh trong game.
 - Chủ phòng 👑 là người duy nhất bấm Bắt đầu và Tạm dừng.
 
