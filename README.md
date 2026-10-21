@@ -4,7 +4,16 @@
 
 Game chiến thuật đồng đội **1v1 → 5v5** chạy trên trình duyệt (điện thoại hoặc máy tính). Hai đội **Xanh** và **Đỏ** tranh nhau các lá cờ ghi đáp án A/B/C/D của một câu hỏi, rồi mang về căn cứ của mình để cắm. Hết giờ mới chấm: cờ nằm ở căn cứ đội nào thì đội đó được cộng hoặc trừ điểm.
 
-Có hai chế độ phòng: **PvP** (hai đội người chơi) và **PvE** (đội Xanh là người, đội Đỏ do máy điều khiển với số bot bằng số người đội Xanh). Bot trong PvE **biết đáp án**: chỉ đi lấy hoặc cướp lá cờ đúng (lỡ nhặt nhầm cờ sai thì tự thả), rồi về cắm và ở lại giữ căn cứ. Khi địch cắm đúng lá cờ đáp án, cả đội bot đi men rìa bản đồ sang tập kết ngoài căn cứ địch, nhử và bắn hạ hiệp sĩ canh, rồi một bot cướp cờ còn các bot khác đứng quanh yểm trợ. Bot còn hộ tống đồng đội đang vác cờ, chạy tới bắn giúp đồng đội đang giao tranh và chặn địch xâm nhập căn cứ. Người vào sau khi phòng đầy có thể **xem trận** với tư cách khán giả.
+Có ba chế độ phòng: **PvP** (hai đội người chơi), **PvE** (đội Xanh là người, đội Đỏ do máy điều khiển với số bot bằng số người đội Xanh) và **EvE** (demo: cả hai đội đều là bot, mọi người chỉ xem). Bot trong PvE **biết đáp án**: chỉ đi lấy hoặc cướp lá cờ đúng (lỡ nhặt nhầm cờ sai thì tự thả), rồi về cắm và ở lại giữ căn cứ. Khi địch cắm đúng lá cờ đáp án, cả đội bot đi men rìa bản đồ sang tập kết ngoài căn cứ địch, nhử và bắn hạ hiệp sĩ canh, rồi một bot cướp cờ còn các bot khác đứng quanh yểm trợ. Bot còn hộ tống đồng đội đang vác cờ, chạy tới bắn giúp đồng đội đang giao tranh và chặn địch xâm nhập căn cứ. Người vào sau khi phòng đầy có thể **xem trận** với tư cách khán giả.
+
+## Chế độ EvE - máy đấu máy (demo)
+
+Dùng để trình diễn game mà không cần người chơi. Khi tạo phòng, chọn **Chế độ: EvE**:
+
+- Chọn số bot mỗi đội (1v1 → 5v5) và số round như phòng thường. Khi chủ phòng bấm **Bắt đầu**, máy tự lập đủ bot cho **cả hai đội** (tên ngẫu nhiên, không trùng).
+- **Mọi người vào phòng, kể cả chủ phòng 👑, đều là khán giả.** Chủ phòng vẫn là người duy nhất bấm Bắt đầu và Tạm dừng. Không ai đổi sang đội Xanh/Đỏ được.
+- Hai đội bot đều **biết đáp án** như bot của PvE, nên trận nào cũng là cuộc đua cướp cờ đúng giữa hai đội máy. Khán giả xem toàn bản đồ hoặc bấm tên một bot để theo sát (phím `←/→`, `V` về toàn map).
+- Hết trận phòng về sảnh, chủ phòng bấm Bắt đầu để chạy trận demo mới. Khi người xem cuối cùng rời đi thì phòng tự đóng.
 
 ## Nhân vật và vũ khí
 

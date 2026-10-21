@@ -258,9 +258,10 @@ class P:
 
 
 class Room:
-    def __init__(s, code, name, pw, size, rounds, host, pve=False):
+    def __init__(s, code, name, pw, size, rounds, host, pve=False, eve=False):
         s.code, s.name, s.pw, s.size, s.rounds, s.host = code, name, pw, size, rounds, host
         s.pve = pve  # PvE: đội Đỏ (1) là bot do máy điều khiển
+        s.eve = eve and not pve  # EvE (demo): cả hai đội đều là bot, mọi người trong phòng (kể cả chủ phòng) chỉ xem
         s.fill = False  # phòng ghép nhanh có lấp chỗ thiếu bằng bot (cả hai đội)
         s.players = {}; s.specs = {}; s.nextpid = 1; s.state = "lobby"; s.phase = "lobby"
         s.flags = []; s.bullets = []; s.q = None; s.round = 0; s.tl = 0.0; s.ev = []
@@ -283,13 +284,15 @@ def hpw(pw):
 
 
 def cap(r):
-    """Số chỗ chơi tối đa của người thật: PvP = 2 đội, PvE = chỉ đội Xanh (đội Đỏ là máy)."""
+    """Số chỗ chơi tối đa của người thật: PvP = 2 đội, PvE = chỉ đội Xanh (đội Đỏ là máy), EvE = không có (cả hai đội là máy)."""
+    if r.eve:
+        return 0
     return r.size if r.pve else r.size * 2
 
 
 def info(r):
     return {"code": r.code, "name": r.name, "size": r.size, "rounds": r.rounds, "pw": bool(r.pw), "state": r.state,
-            "pve": r.pve, "max": cap(r), "n": sum(1 for q in r.players.values() if not q.bot), "ns": len(r.specs),
+            "pve": r.pve, "eve": r.eve, "max": cap(r), "n": sum(1 for q in r.players.values() if not q.bot), "ns": len(r.specs),
             "host": (r.players.get(r.host) or r.specs.get(r.host) or P(0, "", 0)).pid,
             "teams": [[{"pid": p.pid, "nick": p.nick} for p in r.players.values() if p.team == t and not p.bot] for t in (0, 1)],
             "specs": [{"pid": p.pid, "nick": p.nick} for p in r.specs.values()]}
@@ -306,7 +309,7 @@ def push(r):
 
 def add_player(r, sid, nick, spec=False):
     p = P(sid, nick, r.nextpid); r.nextpid += 1
-    if spec:
+    if spec or r.eve:  # phòng EvE: ai vào cũng là khán giả
         p.team = -1; r.specs[sid] = p
     else:
         c = [sum(1 for q in r.players.values() if q.team == t) for t in (0, 1)]
@@ -380,7 +383,7 @@ def on_create(d):
         code = str(random.randint(1000, 9999))
         while code in ROOMS:
             code = str(random.randint(1000, 9999))
-        r = Room(code, name, hpw(clean(d.get("pw"), 20)), num(d.get("size"), 1, 5, 3), num(d.get("rounds"), 1, 5, 3), sid, bool(d.get("pve")))
+        r = Room(code, name, hpw(clean(d.get("pw"), 20)), num(d.get("size"), 1, 5, 3), num(d.get("rounds"), 1, 5, 3), sid, bool(d.get("pve")), bool(d.get("eve")))
         ROOMS[code] = r
         p = add_player(r, sid, nick)
         emit("me", {"pid": p.pid}); push(r)
@@ -475,6 +478,8 @@ def on_seat(d):
                 return emit("err", "Ghế khán giả đã đầy.")
             r.players.pop(sid, None); p.team = -1; r.specs[sid] = p
         else:
+            if r.eve:
+                return emit("err", "Phòng EvE: cả hai đội do máy điều khiển, bạn chỉ xem được.")
             if r.pve and t == 1:
                 return emit("err", "Phòng PvE: đội Đỏ do máy điều khiển.")
             if sum(1 for q in r.players.values() if q.team == t) >= r.size:
@@ -492,8 +497,8 @@ def on_team():
         p = r.players.get(request.sid)
         if not p:
             return
-        if r.pve:
-            return emit("err", "Phòng PvE: đội Đỏ do máy điều khiển.")
+        if r.pve or r.eve:
+            return emit("err", "Phòng PvE: đội Đỏ do máy điều khiển." if r.pve else "Phòng EvE: cả hai đội do máy điều khiển.")
         t = 1 - p.team
         if sum(1 for q in r.players.values() if q.team == t) >= r.size:
             return emit("err", "Đội kia đã đủ người.")
@@ -585,7 +590,9 @@ def on_start():
         r = SID_ROOM.get(request.sid)
         if not r or r.host != request.sid or r.state != "lobby":
             return
-        if r.pve:
+        if r.eve:
+            pass  # EvE: không cần người chơi, máy tự lập cả hai đội khi trận bắt đầu
+        elif r.pve:
             if not any(p.team == 0 for p in r.players.values()):
                 return emit("err", "Cần ít nhất 1 người chơi ở đội Xanh.")
         elif not r.fill and (not any(p.team == 0 for p in r.players.values()) or not any(p.team == 1 for p in r.players.values())):
@@ -1683,7 +1690,7 @@ def _run_match(r):
         remove_bots(r)
         if r.pve:
             add_bots(r)
-        elif r.fill:
+        elif r.eve or r.fill:  # EvE: lập đủ size bot cho CẢ HAI đội (không có người chơi thật)
             fill_bots(r)
         for q in r.players.values():
             q.score = q.kills = q.deaths = 0; q.up = 0

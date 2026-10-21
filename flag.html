@@ -132,17 +132,17 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 <div id="modal" class="mdl hide"><div class="card" style="max-width:420px"><h2>➕ Tạo phòng</h2>
   <label>Tên phòng</label><input id="rname" maxlength="24" placeholder="Tên phòng">
   <label>Mật khẩu</label><input id="rpw" maxlength="20" placeholder="Có thể bỏ trống">
-  <label>Chế độ</label><select id="rmode"><option value="pvp">PvP - đấu với người</option><option value="pve">PvE - đấu với máy (bot)</option></select>
+  <label>Chế độ</label><select id="rmode"><option value="pvp">PvP - đấu với người</option><option value="pve">PvE - đấu với máy (bot)</option><option value="eve">EvE - máy đấu máy (demo, chỉ xem)</option></select>
   <div class="row"><div><label>Số người mỗi đội</label><select id="rsize"><option value="1">1 vs 1</option><option value="2">2 vs 2</option><option value="3">3 vs 3</option><option value="4">4 vs 4</option><option value="5" selected>5 vs 5</option></select></div>
   <div><label>Số round</label><select id="rrounds"><option value="1">1 round</option><option value="3" selected>3 round</option><option value="5">5 round</option></select></div></div>
   <div class="row" style="margin-top:12px"><button class="btn" id="bmcancel">Huỷ</button><button class="btn pri" id="bcreate">Tạo phòng</button></div></div></div>
 
 <div id="roomscr" class="scr bgs rsc hide">
  <div class="card"><h2 id="rt"></h2><small id="rs"></small>
-  <div class="teams" style="margin-top:10px"><div class="tm t0"><b>🔵 Đội Xanh</b><div id="t0"></div></div><div class="tm t1"><b id="t1h">🔴 Đội Đỏ</b><div id="t1"></div></div></div>
+  <div class="teams" style="margin-top:10px"><div class="tm t0"><b id="t0h">🔵 Đội Xanh</b><div id="t0"></div></div><div class="tm t1"><b id="t1h">🔴 Đội Đỏ</b><div id="t1"></div></div></div>
   <div class="tm" id="tsp" style="margin-top:10px;min-height:0"><b>👁 Ghế khán giả</b> <small>(chỉ xem, không chơi)</small><div id="t2"></div></div>
   <div class="row" style="margin-top:10px"><button class="btn" id="bs0">🔵 Đội Xanh</button><button class="btn" id="bs1">🔴 Đội Đỏ</button><button class="btn" id="bs2">👁 Khán giả</button><button class="btn pri" id="bstart">Bắt đầu</button><button class="btn dng" id="bleave">Rời phòng</button></div>
-  <small>Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Mỗi đội cần ít nhất 1 người.</small></div>
+  <small id="rnote">Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Mỗi đội cần ít nhất 1 người.</small></div>
 </div>
 
 </div><!-- /.shell -->
@@ -240,7 +240,7 @@ function start(V){
  $('#brjc').onclick=rjCancel;
  sock.on('err',toast);sock.on('me',d=>pid=d.pid);
  sock.on('rooms',list=>{const el=$('#rooms');
-  el.innerHTML=list.length?list.map(r=>`<div class="room"><div class="nm">${r.pw?'🔒 ':''}${r.pve?'<span class="tag">PvE</span>':''}${esc(r.name)}<br><small>#${r.code} · ${r.size}v${r.size} · ${r.n}/${r.max}${r.ns?` · 👁${r.ns}`:''} · ${r.rounds} round${r.state!=='lobby'?' · đang chơi':''}</small></div>
+  el.innerHTML=list.length?list.map(r=>`<div class="room"><div class="nm">${r.pw?'🔒 ':''}${r.pve?'<span class="tag">PvE</span>':''}${r.eve?'<span class="tag">EvE</span>':''}${esc(r.name)}<br><small>#${r.code} · ${r.size}v${r.size} · ${r.eve?'🤖 máy đấu máy':r.n+'/'+r.max}${r.ns?` · 👁${r.ns}`:''} · ${r.rounds} round${r.state!=='lobby'?' · đang chơi':''}</small></div>
    <button class="btn pri" data-c="${r.code}" data-p="${r.pw?1:0}" ${r.state!=='lobby'||r.n>=r.max?'title="Vào ghế khán giả"':''}>${r.state!=='lobby'||r.n>=r.max?'👁 Xem':'Vào'}</button></div>`).join(''):'<small>Chưa có phòng nào. Hãy tạo phòng!</small>';
   el.querySelectorAll('button').forEach(b=>b.onclick=()=>{let pw='';if(b.dataset.p==='1'){pw=prompt('Nhập mật khẩu phòng:');if(pw===null)return}sock.emit('join',{code:b.dataset.c,pw,nick:nick()})})});
  sock.on('room',r=>{if(rjIgnore)return;room=r;closeModal();qReset();if(!inGame){if(!window.endUp){show('roomscr');drawRoom()}}else updPause()});
@@ -284,7 +284,7 @@ function start(V){
    h+=`</tbody><tfoot><tr><td>Tổng</td><td>${ts}</td><td>${tk}</td><td>${td}</td><td>${(tk/Math.max(1,td)).toFixed(2)}</td></tr></tfoot></table>`}
   h+=`<button class="btn pri" id="bback">Về phòng chờ</button></div>`;$('#ov').innerHTML=h;
   $('#ov').classList.remove('hide');$('#bback').onclick=()=>{window.endUp=false;$('#ov').classList.add('hide');show('roomscr');if(room)drawRoom()}});
- $('#bcreate').onclick=()=>{sock.emit('create',{nick:nick(),name:$('#rname').value,pw:$('#rpw').value,size:$('#rsize').value,rounds:$('#rrounds').value,pve:$('#rmode').value==='pve'});closeModal()};
+ $('#bcreate').onclick=()=>{sock.emit('create',{nick:nick(),name:$('#rname').value,pw:$('#rpw').value,size:$('#rsize').value,rounds:$('#rrounds').value,pve:$('#rmode').value==='pve',eve:$('#rmode').value==='eve'});closeModal()};
  $('#bopen').onclick=()=>$('#modal').classList.remove('hide');$('#bmcancel').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};
  $('#bq').onclick=()=>{sock.emit('queue',{nick:nick(),size:$('#qsize').value});$('#qidle').classList.add('hide');$('#qwait').classList.remove('hide');$('#qtxt').textContent='Đang tìm trận...'};
  $('#bqc').onclick=()=>{sock.emit('unqueue');qReset()};
@@ -294,7 +294,7 @@ function start(V){
 }
 function closeModal(){$('#modal').classList.add('hide')}
 function qReset(){$('#qidle').classList.remove('hide');$('#qwait').classList.add('hide')}
-function drawRoom(){const r=room;$('#bs1').classList.toggle('hide',!!r.pve);$('#t1h').textContent=r.pve?'🤖 Đội Đỏ (máy)':'🔴 Đội Đỏ';$('#rt').textContent=(r.pw?'🔒 ':'')+r.name+'  #'+r.code;$('#rs').textContent=`${r.pve?'PvE (đấu với máy) · ':''}Chế độ ${r.size}v${r.size} · ${r.rounds} round · mỗi round 3 phút`;
+function drawRoom(){const r=room;$('#bs0').classList.toggle('hide',!!r.eve);$('#bs1').classList.toggle('hide',!!(r.pve||r.eve));$('#t0h').textContent=r.eve?'🤖 Đội Xanh (máy)':'🔵 Đội Xanh';$('#t1h').textContent=(r.pve||r.eve)?'🤖 Đội Đỏ (máy)':'🔴 Đội Đỏ';$('#rnote').textContent=r.eve?'Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Phòng EvE không cần người chơi: máy tự lập hai đội bot, mọi người đều là khán giả.':'Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Mỗi đội cần ít nhất 1 người.';$('#rt').textContent=(r.pw?'🔒 ':'')+r.name+'  #'+r.code;$('#rs').textContent=`${r.pve?'PvE (đấu với máy) · ':''}${r.eve?'EvE (máy đấu máy, demo) · ':''}Chế độ ${r.size}v${r.size} · ${r.rounds} round · mỗi round 3 phút`;
  for(const t of [0,1])$('#t'+t).innerHTML=r.teams[t].map(p=>`<div>${p.pid===pid?'⭐ ':''}${esc(p.nick)}${p.pid===r.host?' 👑':''}</div>`).join('');
  $('#t2').innerHTML=(r.specs||[]).map(p=>`<span style="display:inline-block;margin:2px 8px 2px 0">${p.pid===pid?'⭐ ':''}${esc(p.nick)}${p.pid===r.host?' 👑':''}</span>`).join('')||'<small>Chưa có ai</small>';
  const mine=(r.specs||[]).some(p=>p.pid===pid)?2:r.teams[0].some(p=>p.pid===pid)?0:1;for(const t of [0,1,2])$('#bs'+t).classList.toggle('on',t===mine);
