@@ -1744,6 +1744,8 @@ def index():
 def static_files(f):
     if f in ("socket_io_min.js", "flag.html", "manifest.json", "version.json", "favicon.ico", "favicon-32.png", "icon-192.png", "icon-512.png"):   # question.json cố tình KHÔNG được trả ra
         return send_from_directory(BASE, f)
+    if f.startswith("img/") and f.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg")):   # ảnh giao diện (nền sảnh...) nằm trong thư mục img/
+        return send_from_directory(os.path.join(BASE, "img"), f[4:], max_age=86400)
     abort(404)
 
 
