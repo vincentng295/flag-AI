@@ -91,6 +91,7 @@ PTS_OK, PTS_BAD = env_num("POINTS_CORRECT", 100), env_num("POINTS_WRONG", -50)
 PTS_KILL = env_num("POINTS_KILL", 20)  # điểm đội khi hạ một đối thủ
 MAXLV = 5
 REJOIN_S = env_num("REJOIN_SECONDS", 90)  # giữ chỗ cho người chơi mất kết nối giữa trận (giây); 0 = tắt
+AFK_S = env_num("AFK_SECONDS", 60)  # đứng yên, không bấm gì quá chừng này giây giữa round thì bot chơi thay tạm thời (bấm lại là lấy lại quyền); 0 = tắt
 MAX_SPECS = env_num("MAX_SPECTATORS", 30)
 MM_WAIT_S = env_num("MATCH_FILL_SECONDS", 60)  # ghép trận tự động: chờ quá chừng này giây thì lấp chỗ thiếu bằng bot; 0 = tắt
 T = 32; TW, TH = 80, 56; W, H = TW * T, TH * T     # bản đồ 80x56 ô
@@ -231,13 +232,19 @@ def next_question():
 
 
 # ---------- mô hình ----------
+def new_ai():
+    return {"stuck_t": 0.0, "lx": 0.0, "ly": 0.0, "det": 0.0, "dd": (0.0, 0.0)}
+
+
 class P:
     def __init__(s, sid, nick, pid):
         s.sid, s.nick, s.pid, s.team = sid, nick, pid, 0
         s.nopick = 0.0  # sau khi thả cờ, chưa nhặt lại được ngay
         s.ep = 0; s.tpos = 0.0  # ep: số lần máy chủ ép vị trí; tpos: lúc nhận vị trí client gần nhất
         s.g = 0; s.w = 0  # g: 0 nam/1 nữ; w: 0 súng bóng nước/1 kiếm nhựa
-        s.bot = False; s.ai = {}
+        s.bot = False; s.ai = new_ai()
+        s.auto = False; s.proxy = False  # auto: người thật đang AFK nên bot chơi thay tạm; proxy: bot thay người đã rời trận
+        s.act = time.time(); s.cw = 0  # act: lần cuối người chơi thật sự thao tác; cw: vũ khí client báo lần trước
         s.up = 0; s.rk = 0  # up: cấp nâng cấp của đội (đặt đầu mỗi round); rk: số đạn tên lửa đang có
         s.score = s.kills = s.deaths = 0  # thống kê cả trận: điểm cá nhân (hạ người/quái), số lần hạ, số lần bị hạ
         s.tok = ""; s.away = False; s.awayAt = 0.0  # tok: token trình duyệt; away: đang mất kết nối, chờ vào lại
@@ -316,14 +323,18 @@ def drop(sid):
     r = SID_ROOM.pop(sid, None)
     if not r:
         return
-    p = r.players.pop(sid, None)
+    p = r.players.get(sid)
     r.specs.pop(sid, None)
     try:
         leave_room(r.code, sid=sid)
     except Exception:
         pass
-    if p and 0 <= p.carry < len(r.flags):
-        f = r.flags[p.carry]; f["c"] = None; f["x"], f["y"] = p.x, p.y
+    if p and r.state == "playing" and not r.dead and not r.abort and p.team in (0, 1) and not p.bot:
+        to_bot(r, sid, p)  # đang giữa trận: nhân vật KHÔNG rời đi mà do bot điều khiển tiếp (cờ đang vác vẫn do bot mang)
+    else:
+        r.players.pop(sid, None)
+        if p and 0 <= p.carry < len(r.flags):
+            f = r.flags[p.carry]; f["c"] = None; f["x"], f["y"] = p.x, p.y
     humans = {k: q for k, q in r.players.items() if not q.bot}
     if not humans and not r.specs:
         r.dead = True; ROOMS.pop(r.code, None)
@@ -425,7 +436,11 @@ def on_rejoin(d):
             pass
         if not p.away:
             sio.emit("kicked", to=old)  # kết nối cũ vẫn còn sống (tab khác): báo cho nó biết
+        was_away = p.away
         p.sid, p.away = sid, False
+        p.auto = False; p.act = time.time(); p.ai = new_ai()
+        if was_away:
+            r.ev.append(["nf", 5, p.pid, 0, -1])  # bảng tin: quay lại, tự điều khiển tiếp
         p.dx = p.dy = 0.0; p.fire = p.fl = p.sh = False
         p.ep += 1; p.tpos = time.time() + 2.0
         r.players[sid] = p; SID_ROOM[sid] = r
@@ -613,6 +628,16 @@ def on_inp(d):
         n = math.hypot(dx, dy)
         if n > 1:
             dx, dy = dx / n, dy / n
+        neww = d.get("w") if d.get("w") in (1, 2) else 0
+        # thao tác thật: di chuyển, bắn/chém, giơ khiên hoặc đổi vũ khí (chỉ nhúc nhích chuột/ngắm thì chưa tính)
+        if dx or dy or d.get("f") or d.get("sh") or neww != p.cw:
+            p.act = time.time()
+            if p.auto:
+                set_auto(r, p, False)  # lấy lại quyền điều khiển từ bot
+        p.cw = neww
+        if p.auto:
+            p.g = 1 if d.get("g") == 1 else 0
+            return  # bot đang chơi thay: bỏ qua input/vị trí client cho tới khi người chơi thao tác lại
         p.dx, p.dy, p.a, p.fire = dx, dy, a, bool(d.get("f"))
         if p.fire and r.phase == "play" and p.down <= 0:
             p.fl = True  # chốt cú bấm ngắn: nhấn+thả giữa 2 tick vẫn tính 1 phát (khớp với đạn client đã hiện)
@@ -666,6 +691,34 @@ def fill_bots(r):
             new_bot(r, t, pool)
 
 
+def botted(p):
+    """Nhân vật đang do máy điều khiển: bot thật, người AFK (bot chơi thay tạm) hoặc người đang mất kết nối chờ vào lại."""
+    return p.bot or p.auto or p.away
+
+
+def set_auto(r, p, on):
+    """Bật/tắt bot chơi thay tạm thời cho người chơi thật đang AFK."""
+    if p.auto == on or p.bot:
+        return
+    p.auto = on; p.ai = new_ai(); p.dx = p.dy = 0.0; p.fire = p.fl = p.sh = False
+    p.act = time.time()
+    p.ep += 1; p.tpos = time.time()  # client chốt lại vị trí theo máy chủ
+    r.ev.append(["nf", 4 if on else 5, p.pid, 0, -1])
+    _emit_safe("auto", {"on": int(on)}, p.sid)
+
+
+def to_bot(r, sid, p):
+    """Người chơi rời trận giữa chừng: giữ nguyên nhân vật (máu, cờ, điểm, thống kê), giao cho bot điều khiển đến hết trận."""
+    r.players.pop(sid, None)
+    p.bot = True; p.proxy = True; p.auto = False; p.away = False; p.tok = ""
+    p.sid = "bot%d" % p.pid
+    p.ai = new_ai(); p.dx = p.dy = 0.0; p.fire = p.fl = p.sh = False; p.w = 0
+    if not p.nick.endswith("🤖"):
+        p.nick += " 🤖"
+    r.players[p.sid] = p
+    r.ev.append(["nf", 6, p.pid, 0, -1])
+
+
 def remove_bots(r):
     for k in [k for k, q in r.players.items() if q.bot]:
         r.players.pop(k, None)
@@ -694,7 +747,8 @@ def bot_ai(r, p):
     else:
         q = getattr(r, "q", None)  # bot "biết" đáp án: chỉ đi lấy/cướp lá cờ đúng, và chỉ khi đội chưa có cờ
         ok = q["ok"] if q else -1
-        cands = [] if team_has_flag(r, p.team) else [f for f in r.flags if f["c"] is None and f["planted"] != p.team and f["letter"] == ok]
+        subst = p.proxy or p.auto or p.away  # bot thay người thật thì KHÔNG được biết đáp án: chỉ canh căn cứ, đánh địch, mang nốt cờ đang vác
+        cands = [] if (subst or team_has_flag(r, p.team)) else [f for f in r.flags if f["c"] is None and f["planted"] != p.team and f["letter"] == ok]
         if carriers:
             c = min(carriers, key=lambda q: math.hypot(q.x - p.x, q.y - p.y))
             dest = (c.x, c.y)
@@ -1121,11 +1175,13 @@ def knock_mon(mo, sx, sy):
 def step(r, live):
     for p in r.players.values():
         if p.down > 0:
+            p.act = time.time()  # đang bị đóng băng thì chưa tính AFK
             p.down -= DT; p.fl = False; p.kbt = 0.0
             if p.down <= 0:
                 p.hp = p.mhp; p.down = 0; spawn(r, p)
             continue
         if not live:
+            p.act = time.time()  # chưa vào giờ chơi thì chưa tính AFK
             continue
         if p.kbt > 0:  # đang bị kiếm đánh bật lùi: máy chủ tự di chuyển, bỏ qua mọi hành động
             nx = p.x + p.kvx * DT
@@ -1136,9 +1192,15 @@ def step(r, live):
             if p.kbt <= 0:
                 p.kbt = 0.0; p.ep += 1; p.tpos = time.time()
             continue
-        if p.bot:
+        if p.prog > 0:
+            p.act = time.time()  # đang đứng cắm/cướp cờ (phải đứng yên) thì không phải AFK
+        if AFK_S > 0 and not p.bot and not p.away and not p.auto and p.team in (0, 1) and time.time() - p.act > AFK_S:
+            set_auto(r, p, True)
+        if botted(p):
             bot_ai(r, p)
-        if p.bot or time.time() - p.tpos > 0.5:  # client không gửi vị trí (mất kết nối/đời cũ) thì máy chủ tự mô phỏng
+            if p.auto:
+                p.ep += 1  # client luôn bám theo vị trí do máy chủ (bot) điều khiển
+        if botted(p) or time.time() - p.tpos > 0.5:  # client không gửi vị trí (mất kết nối/đời cũ) thì máy chủ tự mô phỏng
             sp = SPEED * (1 + 0.04 * (p.lv - 1)) * (CARRY_K if p.carry >= 0 else 1) * (RIVER_K if in_river(p.x, p.y) else 1) * (SHIELD_K if shielding(p) else 1)
             nx = p.x + p.dx * sp * DT
             if not hit_wall(nx, p.y, PR): p.x = nx
@@ -1398,6 +1460,9 @@ def wait(r, secs, live, phase):
             with LOCK:
                 r.phase = phase; r.tl = left
                 expire_away(r)
+                if r.paused:
+                    for q in r.players.values():
+                        q.act = time.time()
                 if phase in ("read", "play"):
                     if not r.paused:
                         step(r, live)
@@ -1458,7 +1523,7 @@ def finish_match(r):
         remove_bots(r)
         r.up = [0, 0]
         for p in list(r.players.values()):
-            p.up = 0; p.reset()
+            p.up = 0; p.reset(); p.auto = False; p.act = time.time()
     if not r.dead:
         sio.emit("end", {"tot": r.total, "aborted": r.abort, "stats": stats}, to=r.code)
         r.abort = False

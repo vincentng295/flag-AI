@@ -68,7 +68,11 @@ Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần gi
 7. **Bảng thống kê:** bấm vào thanh điểm ở giữa phía trên màn hình (có biểu tượng 📊) để mở bảng tên người chơi từng đội với **Điểm, Kill, Defeat, K/D**. Bảng cũng có ở màn hình kết quả mỗi round và cuối trận (nút 📊 Thống kê). Số liệu tính cả trận và reset khi bắt đầu trận mới:
    - **Điểm:** điểm cá nhân từ hạ đối thủ (`POINTS_KILL`) và hạ quái (slime, dơi, hiệp sĩ, Golem, thần giữ cờ). Không gồm điểm cờ, vì điểm cờ tính cho cả đội.
    - **Kill:** số đối thủ đã hạ. **Defeat:** số lần bị hạ (kể cả bởi quái). **K/D:** Kill chia Defeat (Defeat = 0 thì chia cho 1).
-8. Người chơi mất kết nối giữa trận được giữ chỗ 90 giây để vào lại (đổi bằng `REJOIN_SECONDS`).
+8. **Bot chơi thay người vắng mặt:**
+   - **AFK:** đứng yên, không di chuyển/bắn/đổi vũ khí quá 10 giây (đổi bằng `AFK_SECONDS`, `0` = tắt) thì bot chơi thay tạm thời; bấm di chuyển hoặc bắn là lấy lại quyền ngay. Đang cắm/cướp cờ (phải đứng yên) hoặc đang bị đóng băng thì không tính là AFK.
+   - **Mất kết nối giữa trận:** nhân vật do bot điều khiển trong lúc chờ, được giữ chỗ 90 giây để vào lại (đổi bằng `REJOIN_SECONDS`). Hết thời gian chờ thì bot giữ nhân vật đó đến hết trận.
+   - **Thoát trận / rời phòng giữa trận:** nhân vật không biến mất mà do bot điều khiển tiếp đến hết trận (tên có thêm 🤖, điểm số và thống kê giữ nguyên, cờ đang vác bot vác nốt).
+   - Bot thay người **không biết đáp án**: chỉ canh căn cứ, đánh địch, đuổi người vác cờ và mang nốt lá cờ đang vác, không tự đi lấy cờ. Bảng tin bên trái báo khi ai đó AFK, quay lại hoặc rời trận.
 
 **Điều khiển**
 
