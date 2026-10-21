@@ -221,7 +221,7 @@ setMute(AU.mute);
 /* ================= KẾT NỐI ================= */
 function loadSock(){return new Promise((ok,no)=>{const add=u=>{const s=document.createElement('script');s.src=u;s.onload=ok;s.onerror=()=>u.startsWith('http')?no():add('https://cdn.socket.io/4.8.4/socket.io.min.js');document.head.appendChild(s)};add('socket_io_min.js')})}
 loadSock().then(init).catch(()=>toast('Không tải được Socket.IO'));
-function leaveGameUI(){inGame=false;S=null;musicStop();$('#ov').classList.add('hide');$('#pz').classList.add('hide')}
+function leaveGameUI(){inGame=false;window.endUp=false;S=null;musicStop();$('#ov').classList.add('hide');$('#pz').classList.add('hide')}
 let rjOn=false,rjT=null,rjIgnore=false;
 const clearLast=()=>{try{localStorage.removeItem('lastRoom')}catch(e){}};
 function getTok(){let t='';try{t=localStorage.tok||''}catch(e){}if(t.length<16){try{t=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')}catch(e){t=String(Math.random()).slice(2)+Date.now()}try{localStorage.tok=t}catch(e){}}return t}
@@ -243,9 +243,9 @@ function start(V){
   el.innerHTML=list.length?list.map(r=>`<div class="room"><div class="nm">${r.pw?'🔒 ':''}${r.pve?'<span class="tag">PvE</span>':''}${esc(r.name)}<br><small>#${r.code} · ${r.size}v${r.size} · ${r.n}/${r.max}${r.ns?` · 👁${r.ns}`:''} · ${r.rounds} round${r.state!=='lobby'?' · đang chơi':''}</small></div>
    <button class="btn pri" data-c="${r.code}" data-p="${r.pw?1:0}" ${r.state!=='lobby'||r.n>=r.max?'title="Vào ghế khán giả"':''}>${r.state!=='lobby'||r.n>=r.max?'👁 Xem':'Vào'}</button></div>`).join(''):'<small>Chưa có phòng nào. Hãy tạo phòng!</small>';
   el.querySelectorAll('button').forEach(b=>b.onclick=()=>{let pw='';if(b.dataset.p==='1'){pw=prompt('Nhập mật khẩu phòng:');if(pw===null)return}sock.emit('join',{code:b.dataset.c,pw,nick:nick()})})});
- sock.on('room',r=>{if(rjIgnore)return;room=r;closeModal();qReset();if(!inGame){show('roomscr');drawRoom()}else updPause()});
- sock.on('left',()=>{rjIgnore=false;clearLast();room=null;qReset();leaveGameUI();show('lobby')});
- sock.on('rd',d=>{if(rjIgnore)return;rjDone();inGame=true;M=d.map;names={};d.players.forEach(p=>names[p.pid]=p);if(room&&names[pid]){try{localStorage.lastRoom=room.code}catch(e){}}S=null;lastTick=-1;lastPh='';LB.length=0;lCool=0;lSw=0;aInit=false;$('#ov').classList.add('hide');$('#pz').classList.add('hide');
+ sock.on('room',r=>{if(rjIgnore)return;room=r;closeModal();qReset();if(!inGame){if(!window.endUp){show('roomscr');drawRoom()}}else updPause()});
+ sock.on('left',()=>{window.endUp=false;rjIgnore=false;clearLast();room=null;qReset();leaveGameUI();show('lobby')});
+ sock.on('rd',d=>{if(rjIgnore)return;rjDone();inGame=true;window.endUp=false;M=d.map;names={};d.players.forEach(p=>names[p.pid]=p);if(room&&names[pid]){try{localStorage.lastRoom=room.code}catch(e){}}S=null;lastTick=-1;lastPh='';LB.length=0;lCool=0;lSw=0;aInit=false;$('#ov').classList.add('hide');$('#pz').classList.add('hide');
   if(!TER||TER.W!==M.W)buildWorld();show('game');fsEnter();resize();AU.bpm=140;musicStart();duck(false);
   $('#hr').textContent=`Round ${d.i+1}/${d.n}`;
   $('#q').innerHTML=`<div>${esc(d.q.question)}</div>`+d.q.options.map((o,i)=>`<div class="o"><b style="background:${FC[i]}">${L[i]}</b><span>${esc(o)}</span></div>`).join('');
@@ -265,7 +265,7 @@ function start(V){
   if(!r.last)for(const t of [0,1])if(r.upg&&r.upg[t])h+=`<div class="mvp">⬆️ Đội <b style="color:${TC[t]}">${TN[t]}</b> trả lời đúng! Round sau: +1 máu tối đa, súng &amp; kiếm mạnh hơn, khiên rộng hơn (cấp ${r.up[t]}/${r.upmax})</div>`;
   for(const t of [0,1]){const fl=r.planted.filter(x=>x[1]===t);h+=`<div class="row"><b style="color:${TC[t]}">Đội ${TN[t]}</b><span>${fl.length?fl.map(x=>`${L[x[0]]} ${x[0]===r.ok?'✅':'❌'}`).join(' · '):'không cắm cờ nào'}</span><b>${r.delta[t]>=0?'+':''}${r.delta[t]} → ${r.tot[t]}</b></div>`}
   h+=`<button class="btn" id="bstr" style="margin:6px 0">📊 Thống kê</button><br><small>${r.last?'Hết trận, chờ kết quả...':'Round tiếp theo sắp bắt đầu...'}</small></div>`;$('#ov').innerHTML=h;$('#ov').classList.remove('hide');$('#bstr').onclick=openStats});
- sock.on('end',d=>{clearLast();inGame=false;musicStop();const me=myTeam(),dr=d.tot[0]===d.tot[1];const win=!dr&&(d.tot[0]>d.tot[1]?0:1)===me;
+ sock.on('end',d=>{clearLast();inGame=false;window.endUp=true;musicStop();const me=myTeam(),dr=d.tot[0]===d.tot[1];const win=!dr&&(d.tot[0]>d.tot[1]?0:1)===me;
   if(!d.aborted)sfx(dr||isSpec()?'pl':win?'win':'lose');
   const st=(d.stats||[]).map(x=>({pid:x[0],nick:x[1],team:x[2],s:x[3],k:x[4],d:x[5]})),wt=d.tot[0]>d.tot[1]?0:1;
   $('#pz').classList.add('hide');
@@ -283,7 +283,7 @@ function start(V){
    if(!rows.length)h+='<tr><td colspan="5">—</td></tr>';
    h+=`</tbody><tfoot><tr><td>Tổng</td><td>${ts}</td><td>${tk}</td><td>${td}</td><td>${(tk/Math.max(1,td)).toFixed(2)}</td></tr></tfoot></table>`}
   h+=`<button class="btn pri" id="bback">Về phòng chờ</button></div>`;$('#ov').innerHTML=h;
-  $('#ov').classList.remove('hide');$('#bback').onclick=()=>{$('#ov').classList.add('hide');show('roomscr');if(room)drawRoom()}});
+  $('#ov').classList.remove('hide');$('#bback').onclick=()=>{window.endUp=false;$('#ov').classList.add('hide');show('roomscr');if(room)drawRoom()}});
  $('#bcreate').onclick=()=>{sock.emit('create',{nick:nick(),name:$('#rname').value,pw:$('#rpw').value,size:$('#rsize').value,rounds:$('#rrounds').value,pve:$('#rmode').value==='pve'});closeModal()};
  $('#bopen').onclick=()=>$('#modal').classList.remove('hide');$('#bmcancel').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};
  $('#bq').onclick=()=>{sock.emit('queue',{nick:nick(),size:$('#qsize').value});$('#qidle').classList.add('hide');$('#qwait').classList.remove('hide');$('#qtxt').textContent='Đang tìm trận...'};
