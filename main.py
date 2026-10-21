@@ -114,6 +114,7 @@ HEART_RESPAWN = env_num("HEART_RESPAWN", 20.0)         # giây hồi lại sau k
 RK_SPOTS_T = [(7, 7), (73, 49), (7, 38), (73, 18)]      # 4 cây súng tên lửa rải 4 góc bản đồ (đối xứng tâm)
 RK_RESPAWN = env_num("ROCKET_RESPAWN", 45.0)           # giây cây súng hiện lại sau khi bị nhặt
 RK_AMMO, RK_SPEED, RK_TURN, RK_LIFE = 10, 340.0, 3.4, 3.2   # số đạn / tốc độ / tốc độ bẻ lái (rad/s) / thời gian bay
+BOT_RK_FETCH = 1100.0                                    # bot hết đạn thì đi nhặt cây súng tên lửa nằm trong tầm này
 RK_SEEK, RK_DMG, RK_SPLASH, RK_COOL = 460.0, 3, 62.0, 0.8   # tầm tìm mục tiêu / sát thương / bán kính nổ / hồi chiêu
 UP_MAX = min(3, env_num("UPGRADE_MAX", 3))                     # số lần nâng cấp tối đa (mỗi round đội trả lời đúng +1)
 GUN_DMG = [1, 2, 2, 3]                                 # sát thương súng bong bóng theo cấp nâng cấp của đội
@@ -762,9 +763,16 @@ def remove_bots(r):
         r.players.pop(k, None)
 
 
+def clear_shot(x1, y1, x2, y2):
+    """Đường thẳng từ (x1,y1) tới (x2,y2) không vướng tường (tên lửa chạm tường là nổ)."""
+    n = max(1, int(math.hypot(x2 - x1, y2 - y1) // 24))
+    return not any(hit_wall(x1 + (x2 - x1) * i / n, y1 + (y2 - y1) * i / n, 3) for i in range(1, n))
+
+
 def bot_ai(r, p):
     """Bot: nhặt cờ đúng -> mang về cắm; cờ đúng đã bị địch cắm thì cả đội kéo sang cướp (1 người cướp, số còn lại yểm trợ bắn);
-    hộ tống đồng đội đang vác cờ; chạy tới bắn giúp đồng đội đang giao tranh; chặn địch xâm nhập căn cứ; chống kẹt tường."""
+    hộ tống đồng đội đang vác cờ; chạy tới bắn giúp đồng đội đang giao tranh; chặn địch xâm nhập căn cứ; chống kẹt tường.
+    Vũ khí: nhặt súng tên lửa khi hết đạn và bắn người/golem/hiệp sĩ/thần giữ cờ; chém kiếm khi địch trong tầm cận chiến."""
     ai = p.ai
     bx, by = BASES[p.team]
     subst = p.proxy or p.auto or p.away  # bot thay người thật không tự đi nhặt cờ; chỉ cướp lá cờ đúng địch đã cắm, còn lại hỗ trợ đồng đội
@@ -864,6 +872,25 @@ def bot_ai(r, p):
             elif fight:  # đồng đội đang đánh nhau: chạy tới bắn giúp
                 f = min(fight, key=lambda f: math.hypot(f.x - p.x, f.y - p.y))
                 dest, home, stop = (f.x, f.y), False, 200
+    # ---- bot hết đạn thì đi nhặt súng tên lửa (tối đa 2 bot/AFK cùng đội đi nhặt một cây) ----
+    swr = SWORD_R + 4 * (p.lv - 1)  # tầm kiếm hiện tại
+    if p.carry < 0 and p.rk <= 0 and not siege and p.prog <= 0 and not carriers and not (tgt and bd < 220):
+        bk, bs = 1e9, None
+        for k in r.rkp:
+            if k["t"] > 0:
+                continue
+            d0 = math.hypot(k["x"] - p.x, k["y"] - p.y)
+            if d0 > BOT_RK_FETCH or d0 >= bk:
+                continue
+            if sum(1 for m in r.players.values() if m is not p and m.team == p.team and botted(m) and m.down <= 0 and m.rk <= 0
+                   and math.hypot(m.x - k["x"], m.y - k["y"]) < d0) >= 2:
+                continue
+            bk, bs = d0, k
+        if bs:
+            dest, stop, home = (bs["x"], bs["y"]), 12, False
+    # ---- địch sắp vào tầm kiếm: áp sát để chém (trừ khi đang vác cờ / cắm cờ / cướp cờ) ----
+    if p.carry < 0 and not siege and p.prog <= 0 and tgt and math.hypot(tgt.x - p.x, tgt.y - p.y) < swr + 70:
+        dest, stop, home = (tgt.x, tgt.y), swr * 0.5, False
     if not siege:
         ai["wait"] = 0.0  # chỉ giữ bộ đếm chờ khi đang làm người cướp cờ (hết 6 giây thì lao vào luôn, không quay lại chờ)
     lp = ai.get("lp")
@@ -924,12 +951,46 @@ def bot_ai(r, p):
     if ai["det"] > 0:
         ai["det"] -= DT; dx, dy = ai["dd"]
     p.dx, p.dy = dx, dy
-    p.w = 0; p.sh = False
-    if shoot:
+    p.sh = False
+    # ---- chọn vũ khí: kiếm khi địch trong tầm cận chiến > tên lửa (có đạn, có đường bắn) > súng bong bóng ----
+    melee, mb = None, 1e9
+    for q in foes:
+        dd = math.hypot(q.x - p.x, q.y - p.y)
+        if dd < swr - 6 and dd < mb:
+            melee, mb = (q.x, q.y), dd
+    for mo in r.mons:
+        if not mo["alive"] or mo["t"] == 3 or friendly(mo, p.team):
+            continue
+        dd = math.hypot(mo["x"] - p.x, mo["y"] - p.y)
+        if dd < swr + mo["r"] - 6 and dd < mb:
+            melee, mb = (mo["x"], mo["y"]), dd
+    rk_t = None
+    if p.rk > 0 and not melee:
+        cb = 1e9
+        for q in foes:  # người chơi (ưu tiên kẻ đang vác cờ)
+            dd = math.hypot(q.x - p.x, q.y - p.y)
+            sc = dd - (150 if q.carry >= 0 else 0)
+            if 90 < dd < 420 and sc < cb and clear_shot(p.x, p.y, q.x, q.y):
+                rk_t, cb = (q.x, q.y), sc
+        for mo in r.mons:  # golem, hiệp sĩ địch, thần giữ cờ (chỉ khi canh lá cờ bot đang nhắm tới hoặc đã ở sát)
+            if not mo["alive"] or friendly(mo, p.team) or mo["t"] not in (2, 3, 4):
+                continue
+            dd = math.hypot(mo["x"] - p.x, mo["y"] - p.y)
+            if mo["t"] == 3 and not (dd < 300 or math.hypot(dest[0] - mo["ax"], dest[1] - mo["ay"]) < 400):
+                continue
+            sc = dd + 80
+            if 90 < dd < 420 and sc < cb and clear_shot(p.x, p.y, mo["x"], mo["y"]):
+                rk_t, cb = (mo["x"], mo["y"]), sc
+    if melee:
+        p.w = 1; p.a = math.atan2(melee[1] - p.y, melee[0] - p.x); p.fire = True
+    elif rk_t:
+        p.w = 2; p.a = math.atan2(rk_t[1] - p.y, rk_t[0] - p.x) + random.uniform(-0.05, 0.05); p.fire = True
+    elif shoot:
+        p.w = 0
         p.a = math.atan2(shoot[1] - p.y, shoot[0] - p.x) + random.uniform(-0.13, 0.13)
         p.fire = random.random() < 0.8
     else:
-        p.fire = False
+        p.w = 0; p.fire = False
         if dx or dy:
             p.a = math.atan2(dy, dx)
 
@@ -1529,7 +1590,7 @@ def pickup_step(r):
         if k["t"] > 0:
             k["t"] -= DT
             continue
-        got = next((p for p in r.players.values() if not p.bot and p.down <= 0 and p.rk < RK_AMMO and math.hypot(p.x - k["x"], p.y - k["y"]) < 32), None)
+        got = next((p for p in r.players.values() if (not p.bot or p.rk <= 3) and p.down <= 0 and p.rk < RK_AMMO and math.hypot(p.x - k["x"], p.y - k["y"]) < 32), None)
         if got:
             got.rk = RK_AMMO; k["t"] = RK_RESPAWN
             r.ev.append(["p", round(got.x), round(got.y), got.team])

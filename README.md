@@ -46,8 +46,9 @@ Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần gi
 ## Tim hồi máu, súng tên lửa và nâng cấp theo đội (mới)
 
 - **💖 Tim hồi máu:** 6 tim đặt cố định, đối xứng quanh bản đồ (chấm hồng trên minimap). Ai thiếu máu chạm vào thì hồi 1 máu; tim đã nhặt hồi lại sau 20 giây (`HEART_RESPAWN`). Tim rớt từ quái/người bị hạ vẫn giữ nguyên như cũ.
-- **🚀 Súng tên lửa:** 4 cây rải 4 góc bản đồ, đặt đối xứng (chấm cam trên minimap). Nhặt được 10 quả (chỉ người thật nhặt, bot không nhặt), tự chuyển sang slot 3; hết đạn tự về súng bong bóng. Cây súng hiện lại sau 45 giây (`ROCKET_RESPAWN`). Đạn mất khi sang round mới.
+- **🚀 Súng tên lửa:** 4 cây rải 4 góc bản đồ, đặt đối xứng (chấm cam trên minimap). Nhặt được 10 quả (bot cũng biết đi nhặt khi hết đạn), tự chuyển sang slot 3; hết đạn tự về súng bong bóng. Cây súng hiện lại sau 45 giây (`ROCKET_RESPAWN`). Đạn mất khi sang round mới.
 - **💬 Chat:** nhấn `Enter` (hoặc nút 💬 góc trái trên) để mở khung chat; `Tab` hoặc nút 👥/🌐 đổi giữa kênh **Đội** (chỉ đồng đội thấy; khán giả chat với khán giả) và kênh **Cả map** (mọi người trong phòng). `Enter` gửi, `Esc` đóng. Tối đa 120 ký tự, cách nhau 0,6 giây/tin.
+- **🤖 Bot dùng vũ khí:** khi hết đạn, bot (kể cả bot chơi thay người AFK) tự đi nhặt cây súng tên lửa gần nhất trong tầm ~1100 px (tối đa 2 bot cùng đội đi nhặt một cây). Có đạn thì bot bắn tên lửa vào người chơi địch (ưu tiên kẻ đang vác cờ), golem, hiệp sĩ địch và thần giữ cờ canh lá cờ bot đang nhắm tới (cần đường bắn không vướng tường, cách 90–420 px). Địch lọt vào tầm kiếm thì bot chuyển sang kiếm để chém, địch sắp tới gần thì bot áp sát để chém (trừ khi đang vác cờ/cắm cờ/cướp cờ). Xa hơn thì vẫn bắn súng bong bóng như cũ.
 - **⬆️ Nâng cấp khi trả lời đúng:** đội nào cắm đúng cờ ở căn cứ khi hết round thì **round sau** được nâng 1 cấp, cộng dồn tối đa 3 cấp (`UPGRADE_MAX`), reset khi bắt đầu trận mới:
 
 | Cấp | Máu tối đa | Súng bong bóng | Kiếm | Khiên (nửa góc chặn) |
