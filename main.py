@@ -106,6 +106,18 @@ SWORD_DMG = 2                  # kiếm: 2 sát thương / nhát (súng bóng n�
 SHIELD_ARC, SHIELD_K = 1.15, 0.6  # khiên đỡ được trong ±1.15 rad (~66°) phía trước; đi chậm còn 60% khi giơ khiên
 PLANT_S, STEAL_S, SEE_R = 2.0, 2.5, 170.0
 
+# ---------- tim hồi máu trên bản đồ, súng tên lửa, nâng cấp theo đội ----------
+HEART_SPOTS_T = [(14, 30), (30, 50), (34, 12), (66, 26), (50, 6), (46, 44)]   # 6 tim (3 cặp đối xứng tâm)
+HEART_RESPAWN = env_num("HEART_RESPAWN", 20.0)         # giây hồi lại sau khi có người nhặt
+RK_SPOTS_T = [(26, 36), (54, 20)]                      # 2 cây súng tên lửa (đối xứng tâm)
+RK_RESPAWN = env_num("ROCKET_RESPAWN", 45.0)           # giây cây súng hiện lại sau khi bị nhặt
+RK_AMMO, RK_SPEED, RK_TURN, RK_LIFE = 3, 340.0, 3.4, 3.2   # số đạn / tốc độ / tốc độ bẻ lái (rad/s) / thời gian bay
+RK_SEEK, RK_DMG, RK_SPLASH, RK_COOL = 460.0, 3, 62.0, 0.8   # tầm tìm mục tiêu / sát thương / bán kính nổ / hồi chiêu
+UP_MAX = min(3, env_num("UPGRADE_MAX", 3))                     # số lần nâng cấp tối đa (mỗi round đội trả lời đúng +1)
+GUN_DMG = [1, 2, 2, 3]                                 # sát thương súng bong bóng theo cấp nâng cấp của đội
+SWORD_DMG_UP = [2, 3, 3, 4]                            # sát thương kiếm theo cấp nâng cấp
+SHIELD_ARC_UP = 0.12                                   # khiên rộng thêm mỗi cấp (rad)
+
 # ---------- bản đồ: đối xứng tâm (xoay 180 độ) ----------
 def sym(r):
     x, y, w, h = r
@@ -225,13 +237,14 @@ class P:
         s.ep = 0; s.tpos = 0.0  # ep: số lần máy chủ ép vị trí; tpos: lúc nhận vị trí client gần nhất
         s.g = 0; s.w = 0  # g: 0 nam/1 nữ; w: 0 súng bóng nước/1 kiếm nhựa
         s.bot = False; s.ai = {}
+        s.up = 0; s.rk = 0  # up: cấp nâng cấp của đội (đặt đầu mỗi round); rk: số đạn tên lửa đang có
         s.score = s.kills = s.deaths = 0  # thống kê cả trận: điểm cá nhân (hạ người/quái), số lần hạ, số lần bị hạ
         s.tok = ""; s.away = False; s.awayAt = 0.0  # tok: token trình duyệt; away: đang mất kết nối, chờ vào lại
         s.reset()
 
     def reset(s):
-        s.x = s.y = 0.0; s.a = 0.0; s.hp = HP; s.down = 0.0; s.cool = 0.0
-        s.lv = 1; s.exp = 0; s.mhp = HP
+        s.x = s.y = 0.0; s.a = 0.0; s.down = 0.0; s.cool = 0.0
+        s.lv = 1; s.exp = 0; s.mhp = HP + s.up; s.hp = s.mhp; s.rk = 0
         s.sw = 0.0; s.dx = s.dy = 0.0; s.fire = False; s.fl = False; s.sh = False; s.carry = -1; s.prog = 0.0; s.pf = -1
         s.kbt = 0.0; s.kvx = s.kvy = 0.0  # kbt: thời gian còn bị bật lùi
 
@@ -242,7 +255,7 @@ class Room:
         s.pve = pve  # PvE: đội Đỏ (1) là bot do máy điều khiển
         s.players = {}; s.specs = {}; s.nextpid = 1; s.state = "lobby"; s.phase = "lobby"
         s.flags = []; s.bullets = []; s.q = None; s.round = 0; s.tl = 0.0; s.ev = []
-        s.total = [0, 0]; s.dead = False; s.abort = False; s.paused = False; s.beat = time.time()
+        s.total = [0, 0]; s.up = [0, 0]; s.hearts = []; s.rkp = []; s.rockets = []; s.dead = False; s.abort = False; s.paused = False; s.beat = time.time()
 
 
 def clean(v, n):
@@ -579,7 +592,7 @@ def on_inp(d):
         if p.fire and r.phase == "play" and p.down <= 0:
             p.fl = True  # chốt cú bấm ngắn: nhấn+thả giữa 2 tick vẫn tính 1 phát (khớp với đạn client đã hiện)
         p.g = 1 if d.get("g") == 1 else 0
-        p.w = 1 if d.get("w") == 1 else 0
+        p.w = d.get("w") if d.get("w") in (1, 2) else 0
         p.sh = bool(d.get("sh")) and p.w == 1  # giữ khiên (chỉ khi cầm kiếm)
         # Client tự dự đoán vị trí (không giật khi ping cao); máy chủ chỉ kiểm tra có hợp lệ không
         if "x" in d and d.get("ep") == p.ep and p.down <= 0 and p.kbt <= 0 and r.phase == "play" and not r.paused:
@@ -792,7 +805,7 @@ def add_exp(r, p, v):
         return
     p.exp += v
     while p.lv < MAXLV and p.exp >= p.lv * 6:
-        p.exp -= p.lv * 6; p.lv += 1; p.mhp = HP + p.lv - 1; p.hp = p.mhp
+        p.exp -= p.lv * 6; p.lv += 1; p.mhp = HP + p.up + p.lv - 1; p.hp = p.mhp
         r.ev.append(["u", round(p.x), round(p.y), p.team])
     if p.lv >= MAXLV:
         p.exp = 0
@@ -834,7 +847,7 @@ def blocked(r, q, sx, sy):
     if not shielding(q):
         return False
     ang = abs((math.atan2(sy - q.y, sx - q.x) - q.a + math.pi) % (2 * math.pi) - math.pi)
-    if ang > SHIELD_ARC:
+    if ang > SHIELD_ARC + SHIELD_ARC_UP * q.up:
         return False
     r.ev.append(["k", round(q.x), round(q.y), q.team])
     return True
@@ -1102,7 +1115,7 @@ def step(r, live):
                 if mo["alive"] and not friendly(mo, p.team) and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < SWORD_R + mo["r"] + 4 * (p.lv - 1):
                     ang = abs((math.atan2(mo["y"] - p.y, mo["x"] - p.x) - p.a + math.pi) % (2 * math.pi) - math.pi)
                     if ang < 1.05 or math.hypot(mo["x"] - p.x, mo["y"] - p.y) < PR + mo["r"] + 6:
-                        hit_mon(r, mo, p.team, p, SWORD_DMG)
+                        hit_mon(r, mo, p.team, p, SWORD_DMG_UP[min(p.up, 3)])
                         if mo["alive"]:
                             knock_mon(mo, p.x, p.y)
             for q in r.players.values():
@@ -1115,7 +1128,7 @@ def step(r, live):
                 if dd < PR + 6 or ang < 1.05:
                     if blocked(r, q, p.x, p.y):
                         continue
-                    q.hp -= SWORD_DMG
+                    q.hp -= SWORD_DMG_UP[min(p.up, 3)]
                     r.ev.append(["h", round(q.x), round(q.y), q.team])
                     if q.hp <= 0:
                         defeat(r, q, p)
@@ -1124,8 +1137,13 @@ def step(r, live):
         elif fire and p.cool <= 0 and p.w == 0:
             p.cool = COOL
             r.bullets.append({"x": p.x + math.cos(p.a) * (PR + 3), "y": p.y + math.sin(p.a) * (PR + 3),
-                              "vx": math.cos(p.a) * BSPEED, "vy": math.sin(p.a) * BSPEED, "t": p.team, "life": BLIFE, "o": p})
+                              "vx": math.cos(p.a) * BSPEED, "vy": math.sin(p.a) * BSPEED, "t": p.team, "life": BLIFE, "o": p, "dmg": GUN_DMG[min(p.up, 3)]})
             r.ev.append(["s", round(p.x), round(p.y), p.team, p.pid])
+        elif fire and p.cool <= 0 and p.w == 2 and p.rk > 0:  # súng tên lửa: bắn 1 quả đuổi mục tiêu
+            p.cool = RK_COOL; p.rk -= 1
+            r.rockets.append({"x": p.x + math.cos(p.a) * (PR + 8), "y": p.y + math.sin(p.a) * (PR + 8), "a": p.a, "t": p.team,
+                              "life": RK_LIFE, "o": p})
+            r.ev.append(["rl", round(p.x), round(p.y), p.team, p.pid])
     if not live:
         return
     for p in r.players.values():
@@ -1177,12 +1195,12 @@ def step(r, live):
         if not hit and not b.get("mon"):  # đạn của hiệp sĩ không trúng quái trung lập
             mh = next((mo for mo in r.mons if mo["alive"] and not friendly(mo, b["t"]) and math.hypot(mo["x"] - b["x"], mo["y"] - b["y"]) < mo["r"] + 3), None)
             if mh:
-                hit_mon(r, mh, b["t"], b.get("o"))
+                hit_mon(r, mh, b["t"], b.get("o"), b.get("dmg", 1))
                 continue
         if hit:
             if blocked(r, hit, b["x"], b["y"]):
                 continue  # khiên chặn: đạn biến mất
-            hit.hp -= 1
+            hit.hp -= b.get("dmg", 1)
             r.ev.append(["h", round(hit.x), round(hit.y), hit.team])
             if hit.hp <= 0:
                 defeat(r, hit, None if b.get("mon") else b["o"])
@@ -1190,7 +1208,77 @@ def step(r, live):
         keep.append(b)
     r.bullets = keep
     if live:
+        rocket_step(r); pickup_step(r)
         mon_step(r); orb_step(r)
+
+
+def rocket_explode(r, rk):
+    """Tên lửa nổ: mọi địch (người + quái không cùng đội) trong bán kính RK_SPLASH mất RK_DMG máu."""
+    x, y, t, o = rk["x"], rk["y"], rk["t"], rk["o"]
+    r.ev.append(["x", round(x), round(y), t])
+    for q in list(r.players.values()):
+        if q.team == t or q.down > 0 or math.hypot(q.x - x, q.y - y) > RK_SPLASH + PR:
+            continue
+        if blocked(r, q, x, y):
+            continue
+        q.hp -= RK_DMG
+        r.ev.append(["h", round(q.x), round(q.y), q.team])
+        if q.hp <= 0:
+            defeat(r, q, o)
+    for mo in r.mons:
+        if mo["alive"] and not friendly(mo, t) and math.hypot(mo["x"] - x, mo["y"] - y) <= RK_SPLASH + mo["r"]:
+            hit_mon(r, mo, t, o, RK_DMG)
+
+
+def rocket_step(r):
+    keep = []
+    for rk in r.rockets:
+        rk["life"] -= DT
+        # tìm mục tiêu gần nhất trong tầm: người chơi địch (còn sống) hoặc quái không cùng đội
+        tg, bd = None, RK_SEEK
+        for q in r.players.values():
+            if q.team != rk["t"] and q.down <= 0 and not in_bush(q.x, q.y):  # không dò được người đang núp bụi cỏ
+                d = math.hypot(q.x - rk["x"], q.y - rk["y"])
+                if d < bd:
+                    tg, bd = (q.x, q.y, PR), d
+        for mo in r.mons:
+            if mo["alive"] and not friendly(mo, rk["t"]):
+                d = math.hypot(mo["x"] - rk["x"], mo["y"] - rk["y"])
+                if d < bd:
+                    tg, bd = (mo["x"], mo["y"], mo["r"]), d
+        if tg:
+            da = (math.atan2(tg[1] - rk["y"], tg[0] - rk["x"]) - rk["a"] + math.pi) % (2 * math.pi) - math.pi
+            rk["a"] += max(-RK_TURN * DT, min(RK_TURN * DT, da))
+        rk["x"] += math.cos(rk["a"]) * RK_SPEED * DT; rk["y"] += math.sin(rk["a"]) * RK_SPEED * DT
+        if hit_wall(rk["x"], rk["y"], 3):
+            rocket_explode(r, rk); continue
+        boom = any(q.team != rk["t"] and q.down <= 0 and math.hypot(q.x - rk["x"], q.y - rk["y"]) < PR + 6 for q in r.players.values()) \
+            or any(mo["alive"] and not friendly(mo, rk["t"]) and math.hypot(mo["x"] - rk["x"], mo["y"] - rk["y"]) < mo["r"] + 6 for mo in r.mons)
+        if boom:
+            rocket_explode(r, rk); continue
+        if rk["life"] > 0:
+            keep.append(rk)
+    r.rockets = keep
+
+
+def pickup_step(r):
+    """Tim hồi máu (6 chỗ cố định, hồi lại sau HEART_RESPAWN giây) và súng tên lửa (2 chỗ, nhặt được 3 đạn)."""
+    for h in r.hearts:
+        if h["t"] > 0:
+            h["t"] -= DT
+            continue
+        got = next((p for p in r.players.values() if p.down <= 0 and p.hp < p.mhp and math.hypot(p.x - h["x"], p.y - h["y"]) < 30), None)
+        if got:
+            got.hp = min(got.mhp, got.hp + 1); h["t"] = HEART_RESPAWN
+            r.ev.append(["o", round(got.x), round(got.y), got.team])
+    for k in r.rkp:
+        if k["t"] > 0:
+            k["t"] -= DT
+            continue
+        got = next((p for p in r.players.values() if not p.bot and p.down <= 0 and p.rk < RK_AMMO and math.hypot(p.x - k["x"], p.y - k["y"]) < 32), None)
+        if got:
+            got.rk = RK_AMMO; k["t"] = RK_RESPAWN
+            r.ev.append(["p", round(got.x), round(got.y), got.team])
 
 
 def _emit_safe(ev, data, sid):
@@ -1212,10 +1300,13 @@ def send_state(r):
                or any(math.hypot(p.x - s.x, p.y - s.y) < SEE_R for s in seers)]
         ids = {p.pid for p in vis}
         st = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused,
-              "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0)] for p in vis],
+              "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk] for p in vis],
               "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] if (not f["c"] or f["c"].pid in ids)
                     else [-1, -1, f["c"].pid, -1] for f in r.flags],
-              "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid] for b in r.bullets], "ev": evs, "kp": r.kp,
+              "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp,
+              "rk": [[round(k["x"]), round(k["y"]), round(k["a"], 2), k["t"], k["o"].pid] for k in r.rockets],
+              "hr": [[round(h["x"]), round(h["y"]), int(h["t"] <= 0)] for h in r.hearts],
+              "rp": [[round(k["x"]), round(k["y"]), int(k["t"] <= 0)] for k in r.rkp],
               "mo": [mon_pack(mo) for mo in r.mons if mo["alive"]],
               "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs],
               "ps": [[q.pid, q.score, q.kills, q.deaths] for q in list(r.players.values())]}
@@ -1224,9 +1315,12 @@ def send_state(r):
     if r.specs:
         everyone = list(r.players.values())
         full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1,
-                "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0)] for p in everyone],
+                "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk] for p in everyone],
                 "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] for f in r.flags],
-                "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid] for b in r.bullets], "ev": evs, "kp": r.kp,
+                "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp,
+              "rk": [[round(k["x"]), round(k["y"]), round(k["a"], 2), k["t"], k["o"].pid] for k in r.rockets],
+              "hr": [[round(h["x"]), round(h["y"]), int(h["t"] <= 0)] for h in r.hearts],
+              "rp": [[round(k["x"]), round(k["y"]), int(k["t"] <= 0)] for k in r.rkp],
                 "mo": [mon_pack(mo) for mo in r.mons if mo["alive"]],
                 "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs],
               "ps": [[q.pid, q.score, q.kills, q.deaths] for q in list(r.players.values())]}
@@ -1281,12 +1375,16 @@ def play_round(r, i):
     random.shuffle(spots)
     with LOCK:
         r.q, r.round, r.bullets, r.ev, r.paused = q, i, [], [], False
+        r.rockets = []
+        r.hearts = [{"x": a * T, "y": b * T, "t": 0.0} for a, b in HEART_SPOTS_T]
+        r.rkp = [{"x": a * T, "y": b * T, "t": 0.0} for a, b in RK_SPOTS_T]
         r.flags = [{"x": spots[k][0] * T, "y": spots[k][1] * T, "c": None, "planted": -1, "slot": 0, "letter": k} for k in range(n)]
         for p in r.players.values():
+            p.up = r.up[p.team] if p.team in (0, 1) else 0
             p.reset(); spawn(r, p)
         make_mons(r)
         sio.emit("rd", {"i": i, "n": r.rounds, "q": {"question": q["question"], "options": q["options"]},
-                        "players": roster(r), "map": MAPINFO}, to=r.code)
+                        "players": roster(r), "map": MAPINFO, "up": list(r.up)}, to=r.code)
     if not wait(r, READ_S, False, "read"):
         return False
     if not wait(r, PLAY_S, True, "play"):
@@ -1296,10 +1394,15 @@ def play_round(r, i):
         delta = [0, 0]
         for letter, t in planted:
             delta[t] += PTS_OK if letter == q["ok"] else PTS_BAD
+        upg = [False, False]
+        for letter, t in planted:
+            if letter == q["ok"] and r.up[t] < UP_MAX:
+                r.up[t] += 1; upg[t] = True  # đội cắm đúng cờ: round sau +1 máu tối đa, súng/kiếm mạnh hơn, khiên rộng hơn
         delta[0] += r.kp[0]; delta[1] += r.kp[1]  # điểm hạ quái và hạ đối thủ
         r.total = [r.total[0] + delta[0], r.total[1] + delta[1]]
-        res = {"ok": q["ok"], "explanation": q["explanation"], "planted": planted, "delta": delta, "tot": r.total, "last": i == r.rounds - 1}
-        r.bullets = []
+        res = {"ok": q["ok"], "explanation": q["explanation"], "planted": planted, "delta": delta, "tot": r.total, "last": i == r.rounds - 1,
+               "up": list(r.up), "upg": upg, "upmax": UP_MAX}
+        r.bullets = []; r.rockets = []
     sio.emit("res", res, to=r.code)
     return wait(r, RESULT_S, False, "result")
 
@@ -1307,15 +1410,18 @@ def play_round(r, i):
 def finish_match(r):
     """Kết thúc trận (kể cả khi luồng trận bị lỗi): đưa phòng về sảnh, loại người mất kết nối, báo client."""
     with LOCK:
-        r.state = "lobby"; r.phase = "lobby"; r.flags = []; r.bullets = []; r.paused = False
+        r.state = "lobby"; r.phase = "lobby"; r.flags = []; r.bullets = []; r.rockets = []; r.paused = False
+        # thống kê cả trận (gồm cả bot) gửi kèm thông báo kết thúc để hiện bảng tổng kết + chúc mừng
+        stats = [[q.pid, q.nick, q.team, q.score, q.kills, q.deaths] for q in r.players.values()]
         for k, q in list(r.players.items()):  # hết trận: người còn đang mất kết nối thì bị loại khỏi phòng
             if q.away:
                 drop(k)
         remove_bots(r)
+        r.up = [0, 0]
         for p in list(r.players.values()):
-            p.reset()
+            p.up = 0; p.reset()
     if not r.dead:
-        sio.emit("end", {"tot": r.total, "aborted": r.abort}, to=r.code)
+        sio.emit("end", {"tot": r.total, "aborted": r.abort, "stats": stats}, to=r.code)
         r.abort = False
         with LOCK:
             push(r)
@@ -1356,13 +1462,13 @@ def janitor():
 
 def _run_match(r):
     load_questions()
-    r.total = [0, 0]
+    r.total = [0, 0]; r.up = [0, 0]
     with LOCK:
         remove_bots(r)
         if r.pve:
             add_bots(r)
         for q in r.players.values():
-            q.score = q.kills = q.deaths = 0
+            q.score = q.kills = q.deaths = 0; q.up = 0
         sio.emit("room", info(r), to=r.code)
     for i in range(r.rounds):
         if not play_round(r, i):

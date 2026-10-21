@@ -16,6 +16,7 @@ Có hai chế độ phòng: **PvP** (hai đội người chơi) và **PvE** (đ�
 | Áo | Đội Xanh áo xanh, đội Đỏ áo đỏ |
 | 🔫 Súng bong bóng nước | Bắn xa, đạn bay thẳng, 1 sát thương, hồi 0.32 giây. Có **tự ngắm**: đạn hút nhẹ về địch/quái gần tâm ngắm nhất, trong tầm và không bị tường chắn |
 | 🗡️ Kiếm nhựa trẻ em | Chém hình quạt tầm gần (58 px), **2 sát thương**, hồi 0.55 giây. Trúng thì **đẩy lùi** và làm địch choáng, ngắt hành động của họ |
+| 🚀 Súng tên lửa (mới) | Nhặt trên bản đồ, được **3 quả**. Tên lửa **tự dẫn** tới địch/quái gần nhất trong 460 px (không dò được người đang núp bụi cỏ), nổ lan bán kính 62 px, **3 sát thương**, hồi 0.8 giây. Tường chặn được tên lửa, khiên chặn được vụ nổ từ phía trước |
 | 🛡️ Khiên | Chỉ dùng khi cầm kiếm. Giơ khiên chặn được đòn (đạn, kiếm, laze, quái) đến từ phía trước trong khoảng ±66°, nhưng đi chậm còn 60% |
 
 Trúng 1 đòn súng mất 1 máu, trúng 1 nhát kiếm mất 2 máu (mặc định có 3 máu). Hết máu thì bị "đóng băng" 5 giây rồi hồi sinh ở căn cứ. Người đang vác cờ không bắn và không chém được.
@@ -32,6 +33,22 @@ Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần gi
 - **Điểm:** hạ slime +10, dơi +15, hiệp sĩ +25, Golem +60, thần giữ cờ +80, hạ một đối thủ +`POINTS_KILL` (mặc định 20). Điểm cộng cho cả đội và được tính vào cuối round cùng điểm cờ. Điểm hạ gục hiện nhỏ cạnh tổng điểm.
 - **Rớt đồ ngẫu nhiên:** quái, hiệp sĩ và người bị hạ rớt 1-4 cục ⭐ EXP với giá trị ngẫu nhiên, đôi khi rớt thêm ❤️ hồi 1 máu (thần giữ cờ và Golem luôn rớt). Chạm vào để nhặt, ai nhặt trước người đó được. Đồ biến mất sau 25 giây.
 - **Cấp độ (tối đa 5):** lên cấp cần `6 × cấp hiện tại` EXP. Mỗi cấp +1 máu tối đa (và hồi đầy máu), +4% tốc độ, kiếm dài thêm 4 px. Cấp độ reset mỗi round.
+
+## Tim hồi máu, súng tên lửa và nâng cấp theo đội (mới)
+
+- **💖 Tim hồi máu:** 6 tim đặt cố định, đối xứng quanh bản đồ (chấm hồng trên minimap). Ai thiếu máu chạm vào thì hồi 1 máu; tim đã nhặt hồi lại sau 20 giây (`HEART_RESPAWN`). Tim rớt từ quái/người bị hạ vẫn giữ nguyên như cũ.
+- **🚀 Súng tên lửa:** 2 cây đặt đối xứng (chấm cam trên minimap). Nhặt được 3 quả (chỉ người thật nhặt, bot không nhặt), tự chuyển sang slot 3; hết đạn tự về súng bong bóng. Cây súng hiện lại sau 45 giây (`ROCKET_RESPAWN`). Đạn mất khi sang round mới.
+- **⬆️ Nâng cấp khi trả lời đúng:** đội nào cắm đúng cờ ở căn cứ khi hết round thì **round sau** được nâng 1 cấp, cộng dồn tối đa 3 cấp (`UPGRADE_MAX`), reset khi bắt đầu trận mới:
+
+| Cấp | Máu tối đa | Súng bong bóng | Kiếm | Khiên (nửa góc chặn) |
+|---|---|---|---|---|
+| 0 | HP | 1 | 2 | 66° |
+| 1 | HP+1 | 2 | 3 | 73° |
+| 2 | HP+2 | 2 | 3 | 80° |
+| 3 | HP+3 | 3 | 4 | 87° |
+
+  Bảng ở đầu `main.py`: `GUN_DMG`, `SWORD_DMG_UP`, `SHIELD_ARC_UP`. Bong bóng của đội đã nâng cấp to hơn một chút để dễ nhận ra.
+- **🎉 Kết thúc trận:** hiện lời chúc mừng đội thắng (có pháo giấy), người chơi xuất sắc nhất (điểm cao nhất) và bảng thống kê Điểm / Kill / Defeat / K/D của cả hai đội.
 
 ## Cách chơi
 
@@ -55,8 +72,8 @@ Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần gi
 
 **Điều khiển**
 
-- Máy tính: `W A S D` hoặc phím mũi tên để di chuyển, chuột để ngắm, `Space` hoặc bấm chuột trái để tấn công, `E` / `Q` để đổi vũ khí, **giữ chuột phải hoặc `Shift` để giơ khiên** (khi cầm kiếm), `F` để thả cờ, `P` hoặc `Esc` để tạm dừng, `M` để tắt/bật âm thanh, bấm thanh điểm để xem thống kê (`Esc` để đóng).
-- Điện thoại: cần trái để di chuyển, cần phải để ngắm và tự bắn, nút 🔫/🗡️ để đổi vũ khí, nút 🛡️ (kéo/giữ) để giơ khiên, nút 🏳️ (chỉ hiện khi đang vác cờ) để thả cờ. Nên xoay ngang màn hình. Vị trí các nút có thể kéo chỉnh trong game.
+- Máy tính: `W A S D` hoặc phím mũi tên để di chuyển, chuột để ngắm, `Space` hoặc bấm chuột trái để tấn công, phím **`1`** súng bong bóng, **`2`** kiếm gỗ, **`3`** súng tên lửa (`E` / `Q` đổi vũ khí lần lượt), **giữ chuột phải hoặc `Shift` để giơ khiên** (khi cầm kiếm), `F` để thả cờ, `P` hoặc `Esc` để tạm dừng, `M` để tắt/bật âm thanh, bấm thanh điểm để xem thống kê (`Esc` để đóng).
+- Điện thoại: cần trái để di chuyển, cần phải để ngắm và tự bắn, nút **1** 🔫 / **2** 🗡️ / **3** 🚀 (hiện số đạn) để chọn vũ khí, nút 🛡️ (kéo/giữ) để giơ khiên, nút 🏳️ (chỉ hiện khi đang vác cờ) để thả cờ. Nên xoay ngang màn hình. Vị trí các nút có thể kéo chỉnh trong game.
 - Chủ phòng 👑 là người duy nhất bấm Bắt đầu và Tạm dừng.
 
 ## Cài đặt
@@ -115,11 +132,15 @@ cp .env.example .env
 | `POINTS_CORRECT` | `100` | Điểm khi cờ đúng |
 | `POINTS_WRONG` | `-50` | Điểm khi cờ sai |
 | `POINTS_KILL` | `20` | Điểm cho đội khi hạ một đối thủ |
+| `HEART_RESPAWN` | `20` | Giây để tim trên bản đồ hiện lại sau khi bị nhặt |
+| `ROCKET_RESPAWN` | `45` | Giây để súng tên lửa hiện lại sau khi bị nhặt |
+| `UPGRADE_MAX` | `3` | Số cấp nâng cấp tối đa của một đội (tối đa 3 vì bảng sát thương có 4 mức) |
 
 Nếu bật `TUNNEL` và đặt `ALLOWED_HOSTS` khác `*`, nhớ thêm `TUNNEL_HOST` vào danh sách.
 
 Cân bằng nằm ở đầu `main.py`:
 
+- Tên lửa và nâng cấp: `RK_AMMO`, `RK_SPEED`, `RK_TURN`, `RK_SEEK`, `RK_DMG`, `RK_SPLASH`, `RK_COOL`, `GUN_DMG`, `SWORD_DMG_UP`, `SHIELD_ARC_UP`; vị trí tim và súng: `HEART_SPOTS_T`, `RK_SPOTS_T` (toạ độ ô).
 - Súng và kiếm: `BSPEED`, `COOL`, `SWORD_R`, `SWORD_COOL`, `SWORD_DMG`, `SHIELD_ARC`, `SHIELD_K`.
 - Thần giữ cờ: `LASER_RANGE`, `LASER_CHARGE`, `LASER_CD`, `LASER_DMG`, `GUARD_*`.
 - Hiệp sĩ: bảng `MON[4]` (máu, tốc độ, sát thương, điểm) và các hằng `KNIGHT_N`, `KNIGHT_RING`, `KNIGHT_SEE`, `KNIGHT_LEASH`, `KNIGHT_ORBIT`, `KNIGHT_GUN_RANGE`, `KNIGHT_GUN_CD`, `KNIGHT_LOSE`.
