@@ -307,7 +307,7 @@ def add_player(r, sid, nick, spec=False):
         r.players[sid] = p
     SID_ROOM[sid] = r
     p.tok = TOK.get(sid, "")
-    join_room(r.code, sid=sid)
+    sio.server.enter_room(sid, r.code, namespace="/")  # không dùng join_room: nó cần request context, mà ghép trận chạy ở luồng nền
     return p
 
 
