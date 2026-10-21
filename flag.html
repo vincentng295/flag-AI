@@ -86,7 +86,7 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 <div class="shell">
 <div id="lobby" class="scr bgs lob">
  <span id="ver" class="vchip"></span>
- <button class="btn fsb" id="fs0" title="Toàn màn hình">⛶</button>
+ <button class="btn fsb" id="fs0" title="Toàn màn hình">⛶</button><button class="btn fsb" id="bmu0" title="Âm thanh" style="right:calc(max(10px,env(safe-area-inset-right)) + 52px)">🔊</button>
  <div id="verr" class="card hide vbar" style="background:#ffe0e1"></div>
  <div class="dock">
   <section class="gl">
@@ -143,7 +143,7 @@ const FC=['#ff9f1c','#9b5de5','#06b6a4','#e6c200'], TC=['#2d7ff9','#ff5a5f'], TN
 let sock,pid=0,room=null,M=null,names={},S=null,inGame=false,TER=null,TOP=null,MMB=null,lastTick=-1,lastPh='';
 const disp={};
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.remove('hide');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.add('hide'),3200)}
-function show(id){document.body.classList.toggle('ing',id==='game');for(const s of ['lobby','roomscr','game'])$('#'+s).classList.toggle('hide',s!==id)}
+function show(id){document.body.classList.toggle('ing',id==='game');if(typeof lobbyMusic==='function')lobbyMusic(id!=='game');for(const s of ['lobby','roomscr','game'])$('#'+s).classList.toggle('hide',s!==id)}
 $('#nick').value=localStorage.nick||'';$('#nick').oninput=e=>localStorage.nick=e.target.value;
 const nick=()=>$('#nick').value.trim()||'Người chơi';
 const isSpec=()=>!names[pid],isHost=()=>room&&room.host===pid, myTeam=()=>names[pid]?names[pid].team:0;
@@ -190,7 +190,7 @@ function sfx(n,x,y){if(!AU.c||AU.mute)return;const t=AU.c.currentTime,d=AU.sx;le
  case 'rl':noise(t,.35,.25*v,500,d);tone('sawtooth',200,700,t,.3,.12*v,d);break;
  case 'x':noise(t,.4,.4*v,300,d);tone('sine',140,40,t,.45,.5*v,d);break;
  case 'ui':tone('triangle',700,900,t,.07,.2,d)}}
-function setMute(m){AU.mute=m;localStorage.mute=m?'1':'0';if(AU.m)AU.m.gain.value=m?0:.8;$('#bmu').textContent=m?'🔇':'🔊'}
+function setMute(m){AU.mute=m;localStorage.mute=m?'1':'0';if(AU.m)AU.m.gain.value=m?0:.8;$('#bmu0').textContent=$('#bmu').textContent=m?'🔇':'🔊'}
 setMute(AU.mute);
 
 /* ================= KẾT NỐI ================= */
@@ -662,5 +662,49 @@ $('#gfs').onclick=()=>{const d=document,e=d.documentElement,f=e.requestFullscree
  if(d.fullscreenElement||d.webkitFullscreenElement){lock();return}
  if(!f){$('#gnote').classList.remove('hide');return}
  Promise.resolve(f.call(e)).then(lock).catch(()=>$('#gnote').classList.remove('hide'))};
+</script>
+<script>
+/* ===== NHẠC NỀN SẢNH: giai điệu phiêu lưu vui tươi (Đô trưởng, 96 BPM), tổng hợp bằng WebAudio, không cần file ===== */
+const LM={bpm:96,step:0,next:0,timer:null,stopT:0};
+const LCH=[[48,0],[43,0],[45,1],[41,0],[48,0],[43,0],[41,0],[43,0]]; /* C - G - Am - F | C - G - F - G (gốc, 1 = thứ) */
+const LMEL=[
+ [76,0,0,74,0,72,0,0,67,0,0,0,72,0,0,0],
+ [74,0,0,71,0,67,0,0,71,0,74,0,0,0,0,0],
+ [72,0,0,69,0,72,0,0,76,0,0,74,72,0,0,0],
+ [69,0,0,72,0,69,0,0,67,0,0,0,65,0,0,0],
+ [76,0,0,79,0,76,0,0,74,0,72,0,74,0,0,0],
+ [71,0,0,74,0,79,0,0,76,0,74,0,71,0,0,0],
+ [72,0,0,69,0,72,0,0,77,0,0,76,74,0,0,0],
+ [74,0,0,71,0,74,0,0,79,0,0,0,0,0,0,0]];
+function lInit(){if(AU.lob||!AU.c)return;const c=AU.c;
+ AU.lob=c.createGain();AU.lob.gain.value=0;AU.lob.connect(AU.m);
+ AU.ldl=c.createGain();const dl=c.createDelay(1),fb=c.createGain(),lp=c.createBiquadFilter(),wet=c.createGain();
+ dl.delayTime.value=60/LM.bpm*.75;fb.gain.value=.34;lp.type='lowpass';lp.frequency.value=2400;wet.gain.value=.45; /* echo nốt lửng kiểu "vang núi" */
+ AU.ldl.connect(dl);dl.connect(lp);lp.connect(fb);fb.connect(dl);lp.connect(wet);wet.connect(AU.lob)}
+function lnote(ty,f,t,dur,vol,dst,atk){const c=AU.c,o=c.createOscillator(),g=c.createGain();o.type=ty;o.frequency.value=f;atk=atk||.012;
+ g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(vol,t+atk);g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+ o.connect(g);[].concat(dst).forEach(x=>g.connect(x));o.start(t);o.stop(t+dur+.05)}
+function lbeat(t,s){const bar=(s>>4)&7,st=s&15,[root,mi]=LCH[bar],iv=mi?[0,3,7]:[0,4,7],d=AU.lob,L=60/LM.bpm/4;
+ if(st===0)iv.forEach(i=>{lnote('triangle',mf(root+12+i),t,L*15,.05,d,.7);lnote('sine',mf(root+24+i),t,L*15,.025,d,.9)}); /* nền hợp âm êm */
+ if(st===0)lnote('triangle',mf(root),t,L*5,.22,d);
+ if(st===6)lnote('triangle',mf(root+7),t,L*3,.16,d);
+ if(st===10)lnote('triangle',mf(root),t,L*3,.16,d);
+ if(st===14&&bar%2)lnote('triangle',mf(root+12),t,L*2,.1,d);
+ if(st%2===0)lnote('sine',mf(root+24+iv[[0,1,2,1][(st>>1)%4]]),t,L*3.2,.07,[d,AU.ldl]); /* rải hợp âm */
+ const n=LMEL[bar][st];if(n){lnote('triangle',mf(n),t,L*5,.13,[d,AU.ldl]);lnote('sine',mf(n+12),t,L*3,.035,d)}
+ if(st%8===0)tone('sine',150,45,t,.2,.34,d); /* trống bass nhẹ */
+ if(st===4||st===12)noise(t,.06,.1,2600,d);
+ if(st%2===0)noise(t,.03,st%4===2?.06:.035,9000,d)}
+function lobbyStart(){if(!AU.c)return;lInit();clearTimeout(LM.stopT);
+ AU.lob.gain.cancelScheduledValues(AU.c.currentTime);AU.lob.gain.setTargetAtTime(.6,AU.c.currentTime,.9);
+ if(LM.timer)return;LM.step=0;LM.next=AU.c.currentTime+.1;
+ LM.timer=setInterval(()=>{if(AU.c.state!=='running'){LM.next=AU.c.currentTime+.1;return}while(LM.next<AU.c.currentTime+.15){lbeat(LM.next,LM.step++);LM.next+=60/LM.bpm/4}},25)}
+function lobbyStop(){if(!LM.timer)return;AU.lob.gain.cancelScheduledValues(AU.c.currentTime);AU.lob.gain.setTargetAtTime(0,AU.c.currentTime,.25);
+ clearTimeout(LM.stopT);LM.stopT=setTimeout(()=>{clearInterval(LM.timer);LM.timer=null},900)}
+function lobbyMusic(on){if(on){if(AU.c)lobbyStart()}else lobbyStop()}
+/* trình duyệt chỉ cho phát tiếng sau lần chạm đầu tiên */
+['pointerdown','keydown'].forEach(t=>addEventListener(t,()=>{if(inGame)return;auInit();lobbyStart()},{capture:true}));
+document.addEventListener('visibilitychange',()=>{if(document.hidden)lobbyStop();else if(!inGame&&AU.c)lobbyStart()});
+$('#bmu0').onclick=()=>{auInit();setMute(!AU.mute);sfx('ui')};$('#bmu0').textContent=AU.mute?'🔇':'🔊';
 </script>
 </body></html>
