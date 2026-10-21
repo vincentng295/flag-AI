@@ -724,6 +724,17 @@ KNIGHT_N, KNIGHT_RING = 5, 100.0                   # số hiệp sĩ mỗi độ
 KNIGHT_SEE = BASE_R + 170.0                        # địch vào trong tầm này (tính từ tâm căn cứ) thì hiệp sĩ lao ra chặn
 KNIGHT_LEASH = BASE_R + 300.0                      # không đuổi quá xa căn cứ: vượt ngưỡng này là quay về vị trí gác
 KNIGHT_ORBIT = 0.35                                # tốc độ đi vòng quanh căn cứ khi tuần tra (rad/giây)
+KNIGHT_MELEE = PR + 16 + 30                        # xa hơn mức này (khỏi tầm cận chiến) thì hiệp sĩ bắn súng bong bóng
+KNIGHT_GUN_RANGE, KNIGHT_GUN_CD = 360.0, 1.4       # tầm và hồi chiêu súng của hiệp sĩ (1 sát thương/viên)
+KNIGHT_LOSE = 520.0                                # địch cách hiệp sĩ xa hơn mức này = chạy thoát -> về lại căn cứ
+
+
+class _MonOwner:
+    """Chủ đạn của quái/hiệp sĩ: không phải người chơi nên không có thống kê, hạ người thì tính là 'bởi quái vật'."""
+    pid = -1
+
+
+MON_OWNER = _MonOwner()
 
 
 def friendly(mo, team):
@@ -746,7 +757,7 @@ def make_mons(r):
         r.mons.append({"id": len(r.mons), "t": t, "x": x, "y": y, "hx": x, "hy": y, "hp": c["hp"], "mhp": c["hp"],
                        "r": c["r"], "cd": 0.0, "alive": True, "rt": 0.0, "ch": 0.0, "fl": 0.0, "lcd": 2.0, "la": 0.0, "L": 0.0,
                        "ax": x, "ay": y, "ag": None, "wt": 0.0, "ws": 0.0, "wx": x, "wy": y, "kbt": 0.0, "kvx": 0.0, "kvy": 0.0, "stun": 0.0,
-                       "tm": -1, "pa": 0.0})
+                       "tm": -1, "pa": 0.0, "gcd": 0.0})
     for t in (0, 0, 1, 1):
         for _ in range(80):
             x, y = random.uniform(0.15, 0.85) * W, random.uniform(0.15, 0.85) * H
@@ -935,9 +946,11 @@ def knight_step(r, mo, c):
     """Hiệp sĩ: đi vòng quanh căn cứ đội mình; địch lại gần căn cứ (hoặc bắn/chém nó) thì lao ra đánh cận chiến,
     đuổi tới khi địch ngã / chạy thoát / bị kéo quá xa căn cứ thì quay về vị trí gác. Trả về (mục tiêu, khoảng cách)."""
     bx, by = BASES[mo["tm"]]
+    mo["gcd"] -= DT
     tg = mo["ag"]
     if tg is not None and (tg not in r.players.values() or tg.down > 0 or tg.team == mo["tm"]
-                           or math.hypot(tg.x - bx, tg.y - by) > KNIGHT_LEASH):
+                           or math.hypot(tg.x - bx, tg.y - by) > KNIGHT_LEASH
+                           or math.hypot(tg.x - mo["x"], tg.y - mo["y"]) > KNIGHT_LOSE):
         mo["ag"] = tg = None
     if tg is None:
         bd = KNIGHT_SEE
@@ -947,7 +960,18 @@ def knight_step(r, mo, c):
                 tg, bd = p, d
     if tg is not None:
         mon_move(mo, tg.x, tg.y, c["sp"], stop=PR + mo["r"] - 2)
-        return tg, math.hypot(tg.x - mo["x"], tg.y - mo["y"])
+        d = math.hypot(tg.x - mo["x"], tg.y - mo["y"])
+        if KNIGHT_MELEE < d <= KNIGHT_GUN_RANGE and mo["gcd"] <= 0:  # địch ngoài tầm cận chiến: vừa đuổi vừa bắn
+            a = math.atan2(tg.y - mo["y"], tg.x - mo["x"]); ca, sa = math.cos(a), math.sin(a); L = 0.0
+            while L < d and not hit_wall(mo["x"] + ca * L, mo["y"] + sa * L, 3):
+                L += 16
+            if L >= d:  # không bị tường chắn
+                mo["gcd"] = KNIGHT_GUN_CD; a += random.uniform(-0.08, 0.08)
+                r.bullets.append({"x": mo["x"] + math.cos(a) * (mo["r"] + 3), "y": mo["y"] + math.sin(a) * (mo["r"] + 3),
+                                  "vx": math.cos(a) * BSPEED, "vy": math.sin(a) * BSPEED, "t": mo["tm"],
+                                  "life": (KNIGHT_GUN_RANGE + 40) / BSPEED, "o": MON_OWNER, "mon": True})
+                r.ev.append(["s", round(mo["x"]), round(mo["y"]), mo["tm"], -1])
+        return tg, d
     mo["pa"] = (mo["pa"] + KNIGHT_ORBIT * DT) % 6.283185  # điểm gác trượt dần quanh căn cứ
     mon_move(mo, bx + math.cos(mo["pa"]) * KNIGHT_RING, by + math.sin(mo["pa"]) * KNIGHT_RING, c["sp"] * 0.8)
     return None, 1e9
@@ -1150,7 +1174,7 @@ def step(r, live):
         for p in r.players.values():
             if p.team != b["t"] and p.down <= 0 and math.hypot(p.x - b["x"], p.y - b["y"]) < PR + 3:
                 hit = p; break
-        if not hit:
+        if not hit and not b.get("mon"):  # đạn của hiệp sĩ không trúng quái trung lập
             mh = next((mo for mo in r.mons if mo["alive"] and not friendly(mo, b["t"]) and math.hypot(mo["x"] - b["x"], mo["y"] - b["y"]) < mo["r"] + 3), None)
             if mh:
                 hit_mon(r, mh, b["t"], b.get("o"))
@@ -1161,7 +1185,7 @@ def step(r, live):
             hit.hp -= 1
             r.ev.append(["h", round(hit.x), round(hit.y), hit.team])
             if hit.hp <= 0:
-                defeat(r, hit, b["o"])
+                defeat(r, hit, None if b.get("mon") else b["o"])
             continue
         keep.append(b)
     r.bullets = keep

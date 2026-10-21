@@ -28,7 +28,7 @@ Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần gi
 
 - **Quái vật:** mỗi round có 8 quái nhỏ đặt đối xứng hai bên (🟢 slime chậm, 🦇 dơi nhanh) và 1 **Golem** ở giữa bản đồ. Quái đuổi người ở gần, chạm vào là mất máu (Golem mất 2). Bị hạ thì hồi sinh sau 25 giây (Golem 45 giây).
 - **Thần giữ cờ 👁️:** mỗi lá cờ có 1 thần (25 máu, +80 điểm) đi dạo ngẫu nhiên quanh lá cờ. Nó ngắm người gần nhất trong 480 px, nạp 0.9 giây (có đường đỏ báo trước, khoá hướng ở 0.35 giây cuối) rồi bắn tia laze xuyên người, dừng ở tường, mất 2 máu, hồi chiêu 2.6 giây. Laze trúng cả hai đội. Bị bắn hoặc chém thì nó **đuổi theo người đó** cho tới khi họ chạy thoát, ngã, hoặc bị kéo quá xa cờ rồi mới quay về. Kiếm trúng sẽ ngắt ngay lượt nạp laze. Hạ được thì rớt nhiều EXP và luôn rớt ❤️, hồi sinh sau 45 giây.
-- **Hiệp sĩ 🛡️ (mới):** mỗi đội có **5 hiệp sĩ** canh quanh căn cứ của mình, mang màu đội. Họ đi vòng chậm quanh căn cứ; địch lại gần căn cứ, hoặc bắn/chém trúng họ, thì họ lao ra đánh cận chiến (1 máu/đòn), đuổi tới khi địch ngã, chạy thoát hoặc bị kéo quá xa căn cứ rồi quay về chỗ gác. Hiệp sĩ có 6 máu, hạ được +25 điểm, rớt EXP và đôi khi ❤️. **Hiệp sĩ chết không hồi sinh** trong round đó (round sau được tạo lại đủ 5 con). Đòn của đội mình đi xuyên qua hiệp sĩ đội mình.
+- **Hiệp sĩ 🛡️ (mới):** mỗi đội có **5 hiệp sĩ** canh quanh căn cứ của mình, mang màu đội. Họ đi vòng chậm quanh căn cứ; địch lại gần căn cứ, hoặc bắn/chém trúng họ, thì họ lao ra đuổi đánh cận chiến (1 máu/đòn). Khi địch ở ngoài tầm cận chiến nhưng trong tầm 360 px và không bị tường chắn, hiệp sĩ vừa đuổi vừa **bắn súng bong bóng** (1 máu/viên, 1.4 giây/viên, không trúng quái trung lập, hạ người thì tính là "bởi quái vật"). Họ đuổi tới khi địch ngã, chạy thoát (cách hiệp sĩ hơn 520 px hoặc bị kéo quá xa căn cứ) rồi quay về chỗ gác quanh căn cứ. Hiệp sĩ có 6 máu, hạ được +25 điểm, rớt EXP và đôi khi ❤️. **Hiệp sĩ chết không hồi sinh** trong round đó (round sau được tạo lại đủ 5 con). Đòn của đội mình đi xuyên qua hiệp sĩ đội mình.
 - **Điểm:** hạ slime +10, dơi +15, hiệp sĩ +25, Golem +60, thần giữ cờ +80, hạ một đối thủ +`POINTS_KILL` (mặc định 20). Điểm cộng cho cả đội và được tính vào cuối round cùng điểm cờ. Điểm hạ gục hiện nhỏ cạnh tổng điểm.
 - **Rớt đồ ngẫu nhiên:** quái, hiệp sĩ và người bị hạ rớt 1-4 cục ⭐ EXP với giá trị ngẫu nhiên, đôi khi rớt thêm ❤️ hồi 1 máu (thần giữ cờ và Golem luôn rớt). Chạm vào để nhặt, ai nhặt trước người đó được. Đồ biến mất sau 25 giây.
 - **Cấp độ (tối đa 5):** lên cấp cần `6 × cấp hiện tại` EXP. Mỗi cấp +1 máu tối đa (và hồi đầy máu), +4% tốc độ, kiếm dài thêm 4 px. Cấp độ reset mỗi round.
@@ -122,7 +122,7 @@ Cân bằng nằm ở đầu `main.py`:
 
 - Súng và kiếm: `BSPEED`, `COOL`, `SWORD_R`, `SWORD_COOL`, `SWORD_DMG`, `SHIELD_ARC`, `SHIELD_K`.
 - Thần giữ cờ: `LASER_RANGE`, `LASER_CHARGE`, `LASER_CD`, `LASER_DMG`, `GUARD_*`.
-- Hiệp sĩ: bảng `MON[4]` (máu, tốc độ, sát thương, điểm) và các hằng `KNIGHT_N`, `KNIGHT_RING`, `KNIGHT_SEE`, `KNIGHT_LEASH`, `KNIGHT_ORBIT`.
+- Hiệp sĩ: bảng `MON[4]` (máu, tốc độ, sát thương, điểm) và các hằng `KNIGHT_N`, `KNIGHT_RING`, `KNIGHT_SEE`, `KNIGHT_LEASH`, `KNIGHT_ORBIT`, `KNIGHT_GUN_RANGE`, `KNIGHT_GUN_CD`, `KNIGHT_LOSE`.
 
 ## Ngân hàng câu hỏi
 
