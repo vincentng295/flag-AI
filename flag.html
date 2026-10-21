@@ -53,14 +53,16 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 .cf{position:absolute;inset:0;overflow:hidden;pointer-events:none}.cf i{position:absolute;top:-40px;font-style:normal;animation:cf linear infinite}@keyframes cf{to{transform:translateY(115vh) rotate(540deg)}}
 .big{font-size:clamp(20px,4.6vw,30px);margin:4px 0 8px}.mvp{background:#fff3b0;border:3px solid var(--ink);border-radius:12px;padding:5px 8px;margin:6px 0;font-size:14px}
 /* ===== SẢNH: nền ảnh + luôn hiển thị ngang ===== */
+:root{--u:1vh}
+@media (orientation:portrait){body:not(.ing){--u:1vw}body:not(.ing) .shell *{touch-action:none!important}}
 .shell{display:contents}
 @media (orientation:portrait){body:not(.ing) .shell{display:block;position:fixed;left:0;top:0;width:100vh;width:100dvh;height:100vw;height:100dvw;transform-origin:0 0;transform:rotate(90deg) translateY(-100%);overflow:hidden}}
 .bgs{background:#7ab356 url(/img/background.jpg) center 22%/cover no-repeat;touch-action:pan-x pan-y}
 .lob{overflow:hidden;padding:0}
-.dock{position:absolute;left:50%;transform:translateX(-50%);top:23vh;bottom:max(8px,1.6vh);width:min(920px,calc(100% - 20px));display:grid;grid-template-columns:5fr 6fr;gap:10px}
+.dock{position:absolute;left:50%;transform:translateX(-50%);top:calc(var(--u)*23);bottom:max(8px,calc(var(--u)*1.6));width:min(920px,calc(100% - 20px));display:grid;grid-template-columns:5fr 6fr;gap:10px}
 .gl{min-height:0;overflow:auto;touch-action:pan-x pan-y;overscroll-behavior:contain;display:flex;flex-direction:column;gap:8px;padding:8px;border-radius:20px;background:rgba(255,255,255,.28);border:3px solid rgba(255,255,255,.75);box-shadow:0 6px 24px rgba(10,30,80,.35);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .gl .card{margin:0;max-width:none;background:rgba(255,255,255,.93);padding:9px 11px}
-.gl h2{font-size:clamp(14px,2.4vh,18px)}
+.gl h2{font-size:clamp(14px,calc(var(--u)*2.4),18px)}
 .gl .row{margin:4px 0}
 .gl .grow{flex:1;min-height:120px;display:flex;flex-direction:column}
 .gl #rooms{flex:1;min-height:0;overflow:auto;touch-action:pan-x pan-y}
@@ -68,9 +70,9 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 .fsb{position:absolute;right:max(10px,env(safe-area-inset-right));top:10px;width:42px;height:42px;padding:0;display:grid;place-items:center;font-size:18px;z-index:3}
 .vbar{position:absolute;left:50%;top:8px;transform:translateX(-50%);z-index:3;max-width:80%;margin:0}
 .gl details{font-size:12px}.gl summary{cursor:pointer;font-weight:800}
-.rsc{padding-top:23vh}
+.rsc{padding-top:calc(var(--u)*23)}
 .rsc .card{background:rgba(255,255,255,.94);max-width:760px}
-@media (max-height:460px){
+@media (max-height:460px) and (orientation:landscape),(max-width:460px) and (orientation:portrait){
  .gl{gap:5px;padding:6px;border-width:2px}.gl .card{padding:6px 9px;border-radius:14px;box-shadow:0 3px 0 var(--ink)}
  .btn{padding:5px 11px}input,select{padding:5px 8px}.tm{min-height:90px}.rsc .card{padding:8px}
 }
@@ -645,5 +647,19 @@ $('#dice').onclick=()=>{const W1=['Sói','Hổ','Rồng','Cáo','Gấu','Thỏ',
  pick=a=>a[Math.random()*a.length|0],el=$('#nick');let n;
  do{n=`${pick(W1)}-${pick(W2)}-${String(Math.random()*1000|0).padStart(3,'0')}`}while(n.length>14);
  el.value=n;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))};
+</script>
+<script>
+/* Sảnh bị xoay 90° khi cầm dọc: tự ánh xạ cử chỉ vuốt sang trục đã xoay */
+(function(){
+ const rot=()=>matchMedia('(orientation:portrait)').matches&&!document.body.classList.contains('ing');
+ let sx=0,sy=0,tg=null,mv=false;
+ function sc(el,ax){for(;el&&el!==document.body;el=el.parentElement){const s=getComputedStyle(el);
+  if(ax==='y'&&/(auto|scroll)/.test(s.overflowY)&&el.scrollHeight>el.clientHeight+1)return el;
+  if(ax==='x'&&/(auto|scroll)/.test(s.overflowX)&&el.scrollWidth>el.clientWidth+1)return el}return null}
+ document.addEventListener('touchstart',e=>{if(!rot()||e.touches.length!==1){tg=null;return}const t=e.touches[0];sx=t.clientX;sy=t.clientY;tg=e.target;mv=false},{passive:true});
+ document.addEventListener('touchmove',e=>{if(!tg||!rot())return;const t=e.touches[0],dx=t.clientX-sx,dy=t.clientY-sy;
+  if(!mv&&Math.hypot(dx,dy)<8)return;mv=true;sx=t.clientX;sy=t.clientY;
+  const a=sc(tg,'y'),b=sc(tg,'x');if(a)a.scrollTop+=dx;if(b)b.scrollLeft-=dy;e.preventDefault()},{passive:false});
+})();
 </script>
 </body></html>
