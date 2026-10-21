@@ -4,7 +4,7 @@
 
 Game chiến thuật đồng đội **1v1 → 5v5** chạy trên trình duyệt (điện thoại hoặc máy tính). Hai đội **Xanh** và **Đỏ** tranh nhau các lá cờ ghi đáp án A/B/C/D của một câu hỏi, rồi mang về căn cứ của mình để cắm. Hết giờ mới chấm: cờ nằm ở căn cứ đội nào thì đội đó được cộng hoặc trừ điểm.
 
-Có hai chế độ phòng: **PvP** (hai đội người chơi) và **PvE** (đội Xanh là người, đội Đỏ do máy điều khiển với số bot bằng số người đội Xanh). Bot trong PvE **biết đáp án**: chỉ đi lấy hoặc cướp lá cờ đúng, rồi về cắm và ở lại giữ căn cứ. Người vào sau khi phòng đầy có thể **xem trận** với tư cách khán giả.
+Có hai chế độ phòng: **PvP** (hai đội người chơi) và **PvE** (đội Xanh là người, đội Đỏ do máy điều khiển với số bot bằng số người đội Xanh). Bot trong PvE **biết đáp án**: chỉ đi lấy hoặc cướp lá cờ đúng (lỡ nhặt nhầm cờ sai thì tự thả), rồi về cắm và ở lại giữ căn cứ. Khi địch cắm đúng lá cờ đáp án, cả đội bot đi men rìa bản đồ sang tập kết ngoài căn cứ địch, nhử và bắn hạ hiệp sĩ canh, rồi một bot cướp cờ còn các bot khác đứng quanh yểm trợ. Bot còn hộ tống đồng đội đang vác cờ, chạy tới bắn giúp đồng đội đang giao tranh và chặn địch xâm nhập căn cứ. Người vào sau khi phòng đầy có thể **xem trận** với tư cách khán giả.
 
 ## Nhân vật và vũ khí
 

@@ -725,10 +725,23 @@ def remove_bots(r):
 
 
 def bot_ai(r, p):
-    """Bot đơn giản: nhặt cờ chưa cắm cho đội mình -> mang về căn cứ; bắn địch trong tầm; đuổi người đang vác cờ; chống kẹt tường."""
+    """Bot: nhặt cờ đúng -> mang về cắm; cờ đúng đã bị địch cắm thì cả đội kéo sang cướp (1 người cướp, số còn lại yểm trợ bắn);
+    hộ tống đồng đội đang vác cờ; chạy tới bắn giúp đồng đội đang giao tranh; chặn địch xâm nhập căn cứ; chống kẹt tường."""
     ai = p.ai
+    bx, by = BASES[p.team]
+    subst = p.proxy or p.auto or p.away  # bot thay người thật thì KHÔNG được biết đáp án (và chỉ yểm trợ quanh căn cứ)
+    qq = getattr(r, "q", None)  # bot "biết" đáp án: chỉ đi lấy/cướp lá cờ đúng, và chỉ khi đội chưa có cờ
+    ok = qq["ok"] if qq else -1
+    if p.carry >= 0 and not subst and r.flags[p.carry]["letter"] != ok:  # lỡ nhặt phải cờ sai (đi ngang qua) thì thả ngay để đội còn nhặt cờ đúng
+        r.ev.append(["nf", 3, p.pid, r.flags[p.carry]["letter"], -1])
+        drop_flag(r, p)
+        p.nopick = time.time() + 4.0
+        r.ev.append(["p", round(p.x), round(p.y), p.team])
     foes = [q for q in r.players.values() if q.team != p.team and q.down <= 0]
+    mates = [q for q in r.players.values() if q.team == p.team and q is not p and q.down <= 0]
     carriers = [q for q in foes if q.carry >= 0]
+    kn_foes = [mo for mo in r.mons if mo["alive"] and mo["t"] == 4 and not friendly(mo, p.team)]  # hiệp sĩ canh căn cứ địch
+    # ---- chọn mục tiêu bắn: người > hiệp sĩ địch (tầm 330) > quái trung lập (tầm 230) ----
     tgt, bd = None, 1e9
     for q in foes:
         d = math.hypot(q.x - p.x, q.y - p.y)
@@ -738,31 +751,130 @@ def bot_ai(r, p):
     if tgt:
         shoot = (tgt.x, tgt.y)
     elif p.carry < 0:
+        best = 1e9
         for mo in r.mons:
-            if mo["alive"] and mo["t"] != 3 and not friendly(mo, p.team) and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < 230:
-                shoot = (mo["x"], mo["y"]); break
-    home = p.carry >= 0
-    if home:
-        dest = BASES[p.team]
+            if not mo["alive"] or mo["t"] == 3 or friendly(mo, p.team):
+                continue
+            d = math.hypot(mo["x"] - p.x, mo["y"] - p.y)
+            if d < (330 if mo["t"] == 4 else 230) and d < best:
+                shoot, best = (mo["x"], mo["y"]), d
+    # ---- chọn nơi đến ----
+    home, stop, siege = False, 8, False
+    if p.carry >= 0:
+        dest, home = (bx, by), True
     else:
-        q = getattr(r, "q", None)  # bot "biết" đáp án: chỉ đi lấy/cướp lá cờ đúng, và chỉ khi đội chưa có cờ
-        ok = q["ok"] if q else -1
-        subst = p.proxy or p.auto or p.away  # bot thay người thật thì KHÔNG được biết đáp án: chỉ canh căn cứ, đánh địch, mang nốt cờ đang vác
         cands = [] if (subst or team_has_flag(r, p.team)) else [f for f in r.flags if f["c"] is None and f["planted"] != p.team and f["letter"] == ok]
-        if carriers:
+        dest = None
+        if carriers:  # địch đang vác cờ: đuổi theo cướp lại / hạ gục
             c = min(carriers, key=lambda q: math.hypot(q.x - p.x, q.y - p.y))
-            dest = (c.x, c.y)
+            dest, stop = (c.x, c.y), 140
         elif cands:
-            cands.sort(key=lambda f: math.hypot(f["x"] - p.x, f["y"] - p.y))
-            f = cands[1] if len(cands) > 1 and p.pid % 3 == 0 else cands[0]
+            f = min(cands, key=lambda f: math.hypot(f["x"] - p.x, f["y"] - p.y))
             dest = (f["x"], f["y"])
-        else:
-            dest, home = BASES[p.team], True
+            if f["planted"] >= 0:  # cờ đúng đang được địch cắm ở căn cứ họ: tập hợp rồi công thành có đội hình
+                allbots = [m for m in r.players.values() if m.team == p.team and m.bot and not m.proxy]  # kể cả bot đang chờ hồi sinh
+                crew = [m for m in allbots if m.down <= 0 and m.carry < 0]
+                if p not in crew:
+                    crew.append(p)
+                ebx, eby = BASES[f["planted"]]
+                a0 = math.atan2(by - eby, bx - ebx)
+                stg = (ebx + math.cos(a0) * (BASE_R + 230), eby + math.sin(a0) * (BASE_R + 230))  # điểm tập kết: ngay ngoài vùng hiệp sĩ tự lao ra (BASE_R+170), vừa tầm bắn để nhử từng con ra
+                now, kgo = time.time(), "go%d" % p.team
+                active = now - f.get(kgo, -1e9) < 8.0  # đợt công thành đang diễn ra (còn ai đó áp sát cờ trong 8 giây qua)
+                if not active:
+                    near = [m for m in crew if math.hypot(m.x - stg[0], m.y - stg[1]) < 260]
+                    ai["rally"] = ai.get("rally", 0.0) + DT
+                    if (len(near) >= max(1, math.ceil(len(allbots) * 0.7)) and len(kn_foes) <= 1) or ai["rally"] >= 45.0 or p.prog > 0:
+                        active = True; f[kgo] = now  # đủ quân và hiệp sĩ canh đã bị nhử ra hạ gần hết (hoặc chờ quá 45 giây) thì xông vào
+                    else:
+                        dest, stop = stg, 60
+                if active:
+                    ai["rally"] = 0.0
+                    if any(math.hypot(m.x - f["x"], m.y - f["y"]) < 350 for m in crew):
+                        f[kgo] = now
+                    thief = min(crew, key=lambda m: (math.hypot(m.x - f["x"], m.y - f["y"]), m.pid))
+                    siege = thief is p
+                    if siege:  # người gần cờ nhất đi cướp; chờ đồng đội áp sát (tối đa ~6 giây) nếu cờ còn bị canh
+                        others = [m for m in crew if m is not p]
+                        danger = any(math.hypot(q.x - f["x"], q.y - f["y"]) < 300 for q in foes) or any(math.hypot(mo["x"] - f["x"], mo["y"] - f["y"]) < 300 for mo in kn_foes)
+                        covered = any(math.hypot(m.x - p.x, m.y - p.y) < 260 for m in others)
+                        if danger and others and not covered and ai.get("wait", 0.0) < 6.0:
+                            ai["wait"] = ai.get("wait", 0.0) + DT
+                            a = math.atan2(by - f["y"], bx - f["x"])
+                            dest, stop = (f["x"] + math.cos(a) * 170, f["y"] + math.sin(a) * 170), 20
+                        else:
+                            stop = 8
+                    else:  # yểm trợ: đứng vòng quanh lá cờ phía mình, bắn hiệp sĩ/địch canh cờ cho người cướp đứng yên
+                        a = math.atan2(by - f["y"], bx - f["x"]) + ((p.pid % 5) - 2) * 0.55
+                        dest, stop = (f["x"] + math.cos(a) * 100, f["y"] + math.sin(a) * 100), 25
+        if dest is None:  # không có cờ để lấy/cướp: không đứng ngây ở căn cứ nữa
+            leash = BASE_R + 450  # bot thay người thật thì không đi xa căn cứ
+            dest, home = (bx, by), True  # mặc định: canh căn cứ
+            carr = [m for m in mates if m.carry >= 0]
+            intr = [f for f in foes if math.hypot(f.x - bx, f.y - by) < BASE_R + 300]
+            fight = [f for f in foes if any(math.hypot(f.x - m.x, f.y - m.y) < 300 for m in mates)
+                     and (not subst or math.hypot(f.x - bx, f.y - by) < leash)]
+            if carr:  # hộ tống đồng đội đang vác cờ
+                m = min(carr, key=lambda m: math.hypot(m.x - p.x, m.y - p.y))
+                dest, home, stop = (m.x, m.y), False, 100
+            elif intr:  # địch xâm nhập căn cứ: về chặn
+                f = min(intr, key=lambda f: math.hypot(f.x - p.x, f.y - p.y))
+                dest, home, stop = (f.x, f.y), False, 180
+            elif fight:  # đồng đội đang đánh nhau: chạy tới bắn giúp
+                f = min(fight, key=lambda f: math.hypot(f.x - p.x, f.y - p.y))
+                dest, home, stop = (f.x, f.y), False, 200
+    if not siege:
+        ai["wait"] = 0.0  # chỉ giữ bộ đếm chờ khi đang làm người cướp cờ (hết 6 giây thì lao vào luôn, không quay lại chờ)
+    lp = ai.get("lp")
+    jump = lp is None or math.hypot(p.x - lp[0], p.y - lp[1]) > 250  # mới hồi sinh / bị bật xa: tính lại tuyến
+    ai["lp"] = (p.x, p.y)
     d = math.hypot(dest[0] - p.x, dest[1] - p.y)
-    stop = BASE_R * 0.4 if home else (140 if carriers else 8)
+    ebx, eby = BASES[1 - p.team]
+    if p.carry < 0 and d > 1000 and math.hypot(dest[0] - ebx, dest[1] - eby) < 750:
+        # sang căn cứ địch: đi men theo rìa bản đồ (tránh Golem, quái và laze thần giữ cờ ở giữa) rồi mới áp sát
+        lane = LANES[p.pid % 2]
+        pts = lane if math.hypot(lane[0][0] - bx, lane[0][1] - by) < 10 else lane[::-1]
+        if jump or "wp" not in ai:
+            ai["wp"] = min(range(1, len(pts)), key=lambda i: math.hypot(pts[i][0] - p.x, pts[i][1] - p.y))
+        wp = ai["wp"]
+        while wp < len(pts) - 1 and math.hypot(pts[wp][0] - p.x, pts[wp][1] - p.y) < 160:
+            wp += 1
+        ai["wp"] = wp
+        if math.hypot(pts[wp][0] - p.x, pts[wp][1] - p.y) > 160 and wp < len(pts) - 1:
+            dest, stop, home = pts[wp], 8, False
+            d = math.hypot(dest[0] - p.x, dest[1] - p.y)
+    if home:
+        stop = BASE_R * 0.4
     dx = dy = 0.0
     if d > stop:
         dx, dy = (dest[0] - p.x) / d, (dest[1] - p.y) / d
+    if dx or dy:  # né quái trung lập (Golem/slime/dơi/thần giữ cờ) thay vì đâm thẳng vào rồi chết giữa đường
+        ax = ay = 0.0
+        for mo in r.mons:
+            if not mo["alive"] or mo["t"] == 4:
+                continue
+            R = (90, 90, 190, 200)[mo["t"]] + mo["r"]
+            mdx, mdy = p.x - mo["x"], p.y - mo["y"]; md = math.hypot(mdx, mdy)
+            if 1e-3 < md < R and math.hypot(dest[0] - mo["x"], dest[1] - mo["y"]) > R:  # đích nằm sát quái thì thôi (vd. cờ có thần giữ)
+                w = (R - md) / R
+                tx, ty = -mdy / md, mdx / md  # vector tiếp tuyến: đi vòng qua thay vì dừng trước mặt quái
+                if tx * dx + ty * dy < 0:
+                    tx, ty = -tx, -ty
+                ax += (mdx / md) * w * 1.2 + tx * w * 1.4; ay += (mdy / md) * w * 1.2 + ty * w * 1.4
+        if p.carry < 0 and not team_has_flag(r, p.team):
+            for f in r.flags:  # cờ sai (hoặc bot không biết đáp án) nằm dưới đất: đi vòng, đừng chạm vào kẻo tự nhặt
+                if f["c"] is None and f["planted"] == -1 and (subst or f["letter"] != ok):
+                    mdx, mdy = p.x - f["x"], p.y - f["y"]; md = math.hypot(mdx, mdy)
+                    if 1e-3 < md < 60 and math.hypot(dest[0] - f["x"], dest[1] - f["y"]) > 60:
+                        w = (60 - md) / 60
+                        tx, ty = -mdy / md, mdx / md
+                        if tx * dx + ty * dy < 0:
+                            tx, ty = -tx, -ty
+                        ax += (mdx / md) * w * 1.2 + tx * w * 1.4; ay += (mdy / md) * w * 1.2 + ty * w * 1.4
+        if ax or ay:
+            dx, dy = dx + ax, dy + ay
+            n = math.hypot(dx, dy) or 1.0
+            dx, dy = dx / n, dy / n
     ai["stuck_t"] += DT
     if ai["stuck_t"] >= 0.6:
         if (dx or dy) and math.hypot(p.x - ai["lx"], p.y - ai["ly"]) < 20:
