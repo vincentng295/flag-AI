@@ -53,7 +53,7 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 <div id="lobby" class="scr">
  <h1>🚩 Cướp Cờ Đáp Án AI <small id="ver" style="font-size:13px;opacity:.7"></small></h1>
  <div id="verr" class="card hide" style="background:#ffe0e1"></div>
- <div class="card"><h2>Tên của bạn</h2><div class="row"><input id="nick" maxlength="14" placeholder="Nhập tên..."><button class="btn" id="fs0" title="Toàn màn hình">⛶</button></div></div>
+ <div class="card"><h2>Tên của bạn</h2><div class="row"><input id="nick" maxlength="14" placeholder="Nhập tên..."><button class="btn" id="dice" title="Tên ngẫu nhiên">🎲</button><button class="btn" id="fs0" title="Toàn màn hình">⛶</button></div></div>
  <div class="card"><h2>Nhân vật</h2><div class="row"><button class="btn gb" id="g0"><canvas width="84" height="64"></canvas>👦 Học sinh nam</button><button class="btn gb" id="g1"><canvas width="84" height="64"></canvas>👧 Học sinh nữ</button></div><small>Trong trận: nút 🔫/🗡️ hoặc phím E/Q để đổi vũ khí. Khi cầm kiếm: giữ và kéo nút 🛡️ để chọn hướng đỡ.</small></div>
  <div class="card"><h2>⚡ Ghép trận tự động</h2>
   <div class="row" id="qidle"><select id="qsize"><option value="1">1 vs 1</option><option value="2" selected>2 vs 2</option><option value="3">3 vs 3</option><option value="4">4 vs 4</option><option value="5">5 vs 5</option></select><button class="btn pri" id="bq">Tìm trận</button></div>
@@ -563,5 +563,13 @@ function feedEv(e){
   else if(k===2)feedAdd(`${feedNm(e[2])} đã cắm lá cờ đáp án ${feedFl(e[3])} ở căn cứ`);
   else feedAdd(`${feedNm(e[2])} đã thả lá cờ đáp án ${feedFl(e[3])}`)}
  else feedAdd(e[2]>=0?`${feedNm(e[1])} đã bị đánh bại bởi ${feedNm(e[2])}`:`${feedNm(e[1])} đã bị đánh bại bởi <b>quái vật</b>`)}
+</script>
+<script>
+/* Nút xúc xắc: điền tên ngẫu nhiên có nghĩa dạng Sói-Nhanh-123 (con vật + tính chất, tối đa 14 ký tự) */
+$('#dice').onclick=()=>{const W1=['Sói','Hổ','Rồng','Cáo','Gấu','Thỏ','Mèo','Cú','Sóc','Voi','Khỉ','Ếch','Báo','Ngựa','Vịt','Gà','Chim','Heo','Bò','Cá'],
+ W2=['Nhanh','Mạnh','Vui','Tinh','Lanh','Gan','Khỏe','Ngầu','Xinh','Hiền','Giỏi','Lì','Bự','Tí','Nâu','Xám','Đỏ','Xanh','Vàng','Lửa','Sao','Gió','Mây','Bão','Băng'],
+ pick=a=>a[Math.random()*a.length|0],el=$('#nick');let n;
+ do{n=`${pick(W1)}-${pick(W2)}-${String(Math.random()*1000|0).padStart(3,'0')}`}while(n.length>14);
+ el.value=n;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))};
 </script>
 </body></html>
