@@ -9,7 +9,7 @@ Cướp Cờ Đáp Án AI - máy chủ game chiến thuật 1v1 .. 5v5 (Flask + 
 - Chủ phòng có thể tạm dừng cả trận. Có Cloudflare Tunnel (cloudflared) giống snake-AI.
 - question.json KHÔNG được phục vụ ra web để học sinh không xem được đáp án.
 
-Cấu hình: copy flag.env.example thành flag.env (cạnh file này). Chạy: python gunicorn.py (Gunicorn, khuyên dùng) hoặc python main.py (máy chủ dev)
+Cấu hình: copy .env.example thành .env (cạnh file này). Chạy: python gunicorn.py (Gunicorn, khuyên dùng) hoặc python main.py (máy chủ dev)
 """
 import io, os, re, sys, ssl, json, math, time, random, shutil, socket, hashlib, hmac, platform, tarfile
 import threading, subprocess, urllib.request, traceback
@@ -92,6 +92,7 @@ PTS_KILL = env_num("POINTS_KILL", 20)  # điểm đội khi hạ một đối th
 MAXLV = 5
 REJOIN_S = env_num("REJOIN_SECONDS", 90)  # giữ chỗ cho người chơi mất kết nối giữa trận (giây); 0 = tắt
 MAX_SPECS = env_num("MAX_SPECTATORS", 30)
+MM_WAIT_S = env_num("MATCH_FILL_SECONDS", 60)  # ghép trận tự động: chờ quá chừng này giây thì lấp chỗ thiếu bằng bot; 0 = tắt
 T = 32; TW, TH = 80, 56; W, H = TW * T, TH * T     # bản đồ 80x56 ô
 PR = 14; HZ = 20; DT = 1.0 / HZ
 SPEED, CARRY_K, RIVER_K = 200.0, 0.7, 0.75
@@ -253,6 +254,7 @@ class Room:
     def __init__(s, code, name, pw, size, rounds, host, pve=False):
         s.code, s.name, s.pw, s.size, s.rounds, s.host = code, name, pw, size, rounds, host
         s.pve = pve  # PvE: đội Đỏ (1) là bot do máy điều khiển
+        s.fill = False  # phòng ghép nhanh có lấp chỗ thiếu bằng bot (cả hai đội)
         s.players = {}; s.specs = {}; s.nextpid = 1; s.state = "lobby"; s.phase = "lobby"
         s.flags = []; s.bullets = []; s.q = None; s.round = 0; s.tl = 0.0; s.ev = []
         s.total = [0, 0]; s.up = [0, 0]; s.hearts = []; s.rkp = []; s.rockets = []; s.dead = False; s.abort = False; s.paused = False; s.beat = time.time()
@@ -485,6 +487,7 @@ def on_team():
 
 # ---------- ghép trận tự động ----------
 MQ = {}  # cỡ trận (1..5) -> [(sid, nick), ...] theo thứ tự vào hàng chờ
+MQT = {}  # sid -> lúc vào hàng chờ
 
 
 def qnotify(size):
@@ -494,24 +497,28 @@ def qnotify(size):
 
 
 def unq(sid):
+    MQT.pop(sid, None)
     for size, lst in MQ.items():
         if any(x[0] == sid for x in lst):
             lst[:] = [x for x in lst if x[0] != sid]
             qnotify(size)
 
 
-def try_match(size):
+def try_match(size, force=False):
     lst = MQ.setdefault(size, [])
     need = size * 2
-    if len(lst) < need:
+    if len(lst) < need and not (force and lst):
         return
     grp = lst[:need]; del lst[:need]
+    for sid, _ in grp:
+        MQT.pop(sid, None)
     random.shuffle(grp)
     code = str(random.randint(1000, 9999))
     while code in ROOMS:
         code = str(random.randint(1000, 9999))
     r = Room(code, f"Ghép nhanh {size}v{size}", "", size, 3, grp[0][0])
     ROOMS[code] = r
+    r.fill = len(grp) < need  # thiếu người: bot sẽ được thêm âm thầm khi trận bắt đầu
     for sid, nick in grp:
         p = add_player(r, sid, nick)  # add_player tự chia đều hai đội (xen kẽ)
         sio.emit("me", {"pid": p.pid}, to=sid)
@@ -529,8 +536,26 @@ def on_queue(d):
     with LOCK:
         drop(sid)  # rời phòng/hàng chờ cũ
         MQ.setdefault(size, []).append((sid, nick))
+        MQT[sid] = time.time()
         qnotify(size)
         try_match(size)
+
+
+def mm_loop():
+    """Người đầu hàng chờ đợi quá MM_WAIT_S giây mà chưa đủ người: bắt đầu trận với những người đang chờ, chỗ thiếu do bot lấp."""
+    while True:
+        sio.sleep(1)
+        if MM_WAIT_S <= 0:
+            continue
+        try:
+            with LOCK:
+                now = time.time()
+                for size in list(MQ):
+                    lst = MQ[size]
+                    if lst and now - MQT.get(lst[0][0], now) >= MM_WAIT_S:
+                        try_match(size, force=True)
+        except Exception:
+            traceback.print_exc()
 
 
 @sio.on("unqueue")
@@ -548,7 +573,7 @@ def on_start():
         if r.pve:
             if not any(p.team == 0 for p in r.players.values()):
                 return emit("err", "Cần ít nhất 1 người chơi ở đội Xanh.")
-        elif not any(p.team == 0 for p in r.players.values()) or not any(p.team == 1 for p in r.players.values()):
+        elif not r.fill and (not any(p.team == 0 for p in r.players.values()) or not any(p.team == 1 for p in r.players.values())):
             return emit("err", "Mỗi đội cần ít nhất 1 người.")
         r.state = "playing"; r.abort = False; r.paused = False; r.beat = time.time()
         sio.start_background_task(run_match, r)
@@ -620,11 +645,25 @@ def add_bots(r):
     pool = [n for n in BOT_NAMES if n not in taken]
     random.shuffle(pool)
     for _ in range(max(1, min(r.size, humans))):
-        p = P("bot%d" % r.nextpid, pool.pop() if pool else "Bot %d" % random.randint(10, 99), r.nextpid)
-        r.nextpid += 1
-        p.bot = True; p.team = 1; p.g = random.randint(0, 1); p.w = 0
-        p.ai = {"stuck_t": 0.0, "lx": 0.0, "ly": 0.0, "det": 0.0, "dd": (0.0, 0.0)}
-        r.players[p.sid] = p
+        new_bot(r, 1, pool)
+
+
+def new_bot(r, team, pool):
+    p = P("bot%d" % r.nextpid, pool.pop() if pool else "Bot %d" % random.randint(10, 99), r.nextpid)
+    r.nextpid += 1
+    p.bot = True; p.team = team; p.g = random.randint(0, 1); p.w = 0
+    p.ai = {"stuck_t": 0.0, "lx": 0.0, "ly": 0.0, "det": 0.0, "dd": (0.0, 0.0)}
+    r.players[p.sid] = p
+
+
+def fill_bots(r):
+    """Ghép nhanh thiếu người: lấp đủ chỗ trống ở CẢ HAI đội bằng bot (không thông báo gì)."""
+    taken = {p.nick for p in r.players.values()}
+    pool = [n for n in BOT_NAMES if n not in taken]
+    random.shuffle(pool)
+    for t in (0, 1):
+        for _ in range(r.size - sum(1 for p in r.players.values() if p.team == t)):
+            new_bot(r, t, pool)
 
 
 def remove_bots(r):
@@ -1467,6 +1506,8 @@ def _run_match(r):
         remove_bots(r)
         if r.pve:
             add_bots(r)
+        elif r.fill:
+            fill_bots(r)
         for q in r.players.values():
             q.score = q.kills = q.deaths = 0; q.up = 0
         sio.emit("room", info(r), to=r.code)
@@ -1759,13 +1800,14 @@ def startup_worker():
     _boot["worker"] = True
     load_questions()
     sio.start_background_task(janitor)
+    sio.start_background_task(mm_loop)
     print(f"[*] Phiên bản game: {VERSION_NAME} (version {VERSION}) - chỉ client cùng version được kết nối")
     print(f"[*] Bản đồ {TW}x{TH} ô, {HZ} lần/giây. CORS: {ORIGINS if ORIGINS == '*' else ', '.join(ORIGINS)}")
     print(f"[*] Mở http://{'127.0.0.1' if HOST in ('0.0.0.0', '::') else HOST}:{PORT}/")
     if HOST in ("0.0.0.0", "::") and lan_ip():
         print(f"[*] Máy khác cùng Wi-Fi/LAN mở: http://{lan_ip()}:{PORT}/")
     elif HOST not in ("0.0.0.0", "::"):
-        print("[*] (Muốn máy khác trong LAN vào được: đặt HOST=0.0.0.0 trong flag.env)")
+        print("[*] (Muốn máy khác trong LAN vào được: đặt HOST=0.0.0.0 trong .env)")
     start_https()
 
 
