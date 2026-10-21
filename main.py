@@ -111,9 +111,9 @@ PLANT_S, STEAL_S, SEE_R = 2.0, 2.5, 170.0
 # ---------- tim hồi máu trên bản đồ, súng tên lửa, nâng cấp theo đội ----------
 HEART_SPOTS_T = [(14, 30), (30, 50), (34, 12), (66, 26), (50, 6), (46, 44)]   # 6 tim (3 cặp đối xứng tâm)
 HEART_RESPAWN = env_num("HEART_RESPAWN", 20.0)         # giây hồi lại sau khi có người nhặt
-RK_SPOTS_T = [(26, 36), (54, 20)]                      # 2 cây súng tên lửa (đối xứng tâm)
+RK_SPOTS_T = [(7, 7), (73, 49), (7, 38), (73, 18)]      # 4 cây súng tên lửa rải 4 góc bản đồ (đối xứng tâm)
 RK_RESPAWN = env_num("ROCKET_RESPAWN", 45.0)           # giây cây súng hiện lại sau khi bị nhặt
-RK_AMMO, RK_SPEED, RK_TURN, RK_LIFE = 3, 340.0, 3.4, 3.2   # số đạn / tốc độ / tốc độ bẻ lái (rad/s) / thời gian bay
+RK_AMMO, RK_SPEED, RK_TURN, RK_LIFE = 10, 340.0, 3.4, 3.2   # số đạn / tốc độ / tốc độ bẻ lái (rad/s) / thời gian bay
 RK_SEEK, RK_DMG, RK_SPLASH, RK_COOL = 460.0, 3, 62.0, 0.8   # tầm tìm mục tiêu / sát thương / bán kính nổ / hồi chiêu
 UP_MAX = min(3, env_num("UPGRADE_MAX", 3))                     # số lần nâng cấp tối đa (mỗi round đội trả lời đúng +1)
 GUN_DMG = [1, 2, 2, 3]                                 # sát thương súng bong bóng theo cấp nâng cấp của đội
@@ -1485,7 +1485,7 @@ def rocket_step(r):
 
 
 def pickup_step(r):
-    """Tim hồi máu (6 chỗ cố định, hồi lại sau HEART_RESPAWN giây) và súng tên lửa (2 chỗ, nhặt được 3 đạn)."""
+    """Tim hồi máu (6 chỗ cố định, hồi lại sau HEART_RESPAWN giây) và súng tên lửa (4 chỗ ở 4 góc, nhặt được 10 đạn)."""
     for h in r.hearts:
         if h["t"] > 0:
             h["t"] -= DT

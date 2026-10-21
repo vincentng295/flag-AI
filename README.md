@@ -46,7 +46,7 @@ Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần gi
 ## Tim hồi máu, súng tên lửa và nâng cấp theo đội (mới)
 
 - **💖 Tim hồi máu:** 6 tim đặt cố định, đối xứng quanh bản đồ (chấm hồng trên minimap). Ai thiếu máu chạm vào thì hồi 1 máu; tim đã nhặt hồi lại sau 20 giây (`HEART_RESPAWN`). Tim rớt từ quái/người bị hạ vẫn giữ nguyên như cũ.
-- **🚀 Súng tên lửa:** 2 cây đặt đối xứng (chấm cam trên minimap). Nhặt được 3 quả (chỉ người thật nhặt, bot không nhặt), tự chuyển sang slot 3; hết đạn tự về súng bong bóng. Cây súng hiện lại sau 45 giây (`ROCKET_RESPAWN`). Đạn mất khi sang round mới.
+- **🚀 Súng tên lửa:** 4 cây rải 4 góc bản đồ, đặt đối xứng (chấm cam trên minimap). Nhặt được 10 quả (chỉ người thật nhặt, bot không nhặt), tự chuyển sang slot 3; hết đạn tự về súng bong bóng. Cây súng hiện lại sau 45 giây (`ROCKET_RESPAWN`). Đạn mất khi sang round mới.
 - **⬆️ Nâng cấp khi trả lời đúng:** đội nào cắm đúng cờ ở căn cứ khi hết round thì **round sau** được nâng 1 cấp, cộng dồn tối đa 3 cấp (`UPGRADE_MAX`), reset khi bắt đầu trận mới:
 
 | Cấp | Máu tối đa | Súng bong bóng | Kiếm | Khiên (nửa góc chặn) |
