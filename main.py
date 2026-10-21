@@ -736,7 +736,7 @@ def bot_ai(r, p):
     hộ tống đồng đội đang vác cờ; chạy tới bắn giúp đồng đội đang giao tranh; chặn địch xâm nhập căn cứ; chống kẹt tường."""
     ai = p.ai
     bx, by = BASES[p.team]
-    subst = p.proxy or p.auto or p.away  # bot thay người thật thì KHÔNG được biết đáp án (và chỉ yểm trợ quanh căn cứ)
+    subst = p.proxy or p.auto or p.away  # bot thay người thật không tự đi nhặt cờ; chỉ cướp lá cờ đúng địch đã cắm, còn lại hỗ trợ đồng đội
     qq = getattr(r, "q", None)  # bot "biết" đáp án: chỉ đi lấy/cướp lá cờ đúng, và chỉ khi đội chưa có cờ
     ok = qq["ok"] if qq else -1
     if p.carry >= 0 and not subst and r.flags[p.carry]["letter"] != ok:  # lỡ nhặt phải cờ sai (đi ngang qua) thì thả ngay để đội còn nhặt cờ đúng
@@ -770,7 +770,12 @@ def bot_ai(r, p):
     if p.carry >= 0:
         dest, home = (bx, by), True
     else:
-        cands = [] if (subst or team_has_flag(r, p.team)) else [f for f in r.flags if f["c"] is None and f["planted"] != p.team and f["letter"] == ok]
+        if team_has_flag(r, p.team):
+            cands = []
+        elif subst:  # không tự đi nhặt cờ dưới đất; chỉ cướp lá cờ ĐÁP ÁN ĐÚNG mà địch đã cắm, còn lại thì yểm trợ người khác
+            cands = [f for f in r.flags if f["c"] is None and f["planted"] == 1 - p.team and f["letter"] == ok]
+        else:
+            cands = [f for f in r.flags if f["c"] is None and f["planted"] != p.team and f["letter"] == ok]
         dest = None
         if carriers:  # địch đang vác cờ: đuổi theo cướp lại / hạ gục
             c = min(carriers, key=lambda q: math.hypot(q.x - p.x, q.y - p.y))
@@ -779,7 +784,7 @@ def bot_ai(r, p):
             f = min(cands, key=lambda f: math.hypot(f["x"] - p.x, f["y"] - p.y))
             dest = (f["x"], f["y"])
             if f["planted"] >= 0:  # cờ đúng đang được địch cắm ở căn cứ họ: tập hợp rồi công thành có đội hình
-                allbots = [m for m in r.players.values() if m.team == p.team and m.bot and not m.proxy]  # kể cả bot đang chờ hồi sinh
+                allbots = [m for m in r.players.values() if m.team == p.team and ((m.bot and not m.proxy) or m.auto)]  # kể cả bot đang chờ hồi sinh
                 crew = [m for m in allbots if m.down <= 0 and m.carry < 0]
                 if p not in crew:
                     crew.append(p)
@@ -815,12 +820,10 @@ def bot_ai(r, p):
                         a = math.atan2(by - f["y"], bx - f["x"]) + ((p.pid % 5) - 2) * 0.55
                         dest, stop = (f["x"] + math.cos(a) * 100, f["y"] + math.sin(a) * 100), 25
         if dest is None:  # không có cờ để lấy/cướp: không đứng ngây ở căn cứ nữa
-            leash = BASE_R + 450  # bot thay người thật thì không đi xa căn cứ
             dest, home = (bx, by), True  # mặc định: canh căn cứ
             carr = [m for m in mates if m.carry >= 0]
             intr = [f for f in foes if math.hypot(f.x - bx, f.y - by) < BASE_R + 300]
-            fight = [f for f in foes if any(math.hypot(f.x - m.x, f.y - m.y) < 300 for m in mates)
-                     and (not subst or math.hypot(f.x - bx, f.y - by) < leash)]
+            fight = [f for f in foes if any(math.hypot(f.x - m.x, f.y - m.y) < 300 for m in mates)]  # đồng đội ở đâu cũng chạy tới hỗ trợ (kể cả bot thay người)
             if carr:  # hộ tống đồng đội đang vác cờ
                 m = min(carr, key=lambda m: math.hypot(m.x - p.x, m.y - p.y))
                 dest, home, stop = (m.x, m.y), False, 100

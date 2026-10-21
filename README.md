@@ -81,7 +81,7 @@ Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần gi
    - **AFK:** đứng yên, không di chuyển/bắn/đổi vũ khí quá 10 giây (đổi bằng `AFK_SECONDS`, `0` = tắt) thì bot chơi thay tạm thời; bấm di chuyển hoặc bắn là lấy lại quyền ngay. Đang cắm/cướp cờ (phải đứng yên) hoặc đang bị đóng băng thì không tính là AFK.
    - **Mất kết nối giữa trận:** nhân vật do bot điều khiển trong lúc chờ, được giữ chỗ 90 giây để vào lại (đổi bằng `REJOIN_SECONDS`). Hết thời gian chờ thì bot giữ nhân vật đó đến hết trận.
    - **Thoát trận / rời phòng giữa trận:** nhân vật không biến mất mà do bot điều khiển tiếp đến hết trận (tên có thêm 🤖, điểm số và thống kê giữ nguyên, cờ đang vác bot vác nốt).
-   - Bot thay người **không biết đáp án**: chỉ canh căn cứ, đánh địch, đuổi người vác cờ và mang nốt lá cờ đang vác, không tự đi lấy cờ. Bảng tin bên trái báo khi ai đó AFK, quay lại hoặc rời trận.
+   - Bot thay người **không tự đi nhặt cờ dưới đất**. Bot **chỉ đi cướp lá cờ đáp án đúng** khi địch đã cắm nó ở căn cứ họ (và đội mình chưa có cờ), cùng đồng đội công thành. Còn lại bot yểm trợ: canh căn cứ, đánh địch, đuổi người vác cờ, hộ tống và chạy tới hỗ trợ đồng đội đang giao tranh, mang nốt lá cờ đang vác. Địch cắm cờ sai thì bot không đi cướp. Bảng tin bên trái báo khi ai đó AFK, quay lại hoặc rời trận.
 
 **Điều khiển**
 
