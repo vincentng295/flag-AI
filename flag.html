@@ -42,7 +42,7 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 #banner.go{animation:bn 2.2s ease-out}@keyframes bn{0%{opacity:0;transform:scale(.6)}15%{opacity:1;transform:scale(1.05)}75%{opacity:1}100%{opacity:0;transform:scale(1)}}
 #rot{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);background:#fff8c4;border:2px solid var(--ink);border-radius:12px;padding:3px 10px;font-size:12px;display:none;pointer-events:none}
 @media (orientation:portrait){#rot{display:block}}
-#spb{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);z-index:4;display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:94vw;align-items:center}#spb small{background:#fff;border:2px solid #14306b;border-radius:10px;padding:2px 8px;font-weight:700}.spec .cb,.spec #bdr,.spec #bcfg{display:none!important}
+#spb{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);z-index:4;display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:94vw;align-items:center}#spb small{background:#fff;border:2px solid #14306b;border-radius:10px;padding:2px 8px;font-weight:700}.spec .cb,.spec #bdr,.spec #bcfg{display:none!important}.qmin #spb{display:none!important}
 #pill{pointer-events:auto;cursor:pointer}
 #feed{position:absolute;left:max(8px,env(safe-area-inset-left));top:112px;display:flex;flex-direction:column;gap:3px;max-width:min(380px,48vw);pointer-events:none;z-index:3}
 .fi{background:rgba(255,255,255,.88);color:var(--ink);border-radius:8px;padding:2px 8px;font-size:clamp(11px,2.1vw,14px);line-height:1.3;animation:fi 8s forwards}
@@ -600,7 +600,7 @@ sync();vis();all();
 <script>
 (function(){const q=document.getElementById('q');let pref=localStorage.getItem('qmin')==='1',lastPh='';
 const b=document.createElement('button');b.className='btn';b.id='bqz';document.getElementById('tb').appendChild(b);
-function setQ(m){q.classList.toggle('min',m);b.textContent=m?'📖':'🔼';b.title=m?'Mở câu hỏi (H)':'Thu nhỏ câu hỏi (H)'}
+function setQ(m){q.classList.toggle('min',m);document.documentElement.classList.toggle('qmin',m);b.textContent=m?'📖':'🔼';b.title=m?'Mở câu hỏi (H)':'Thu nhỏ câu hỏi (H)'}
 function tog(){const m=!q.classList.contains('min');pref=m;try{localStorage.setItem('qmin',m?1:0)}catch(e){}setQ(m)}
 b.onclick=tog;q.addEventListener('click',()=>{if(q.classList.contains('min'))tog()});
 addEventListener('keydown',e=>{if(e.code==='KeyH'&&inGame)tog()});
