@@ -150,18 +150,6 @@ cp .env.example .env
 | `HEART_RESPAWN` | `20` | Giây để tim trên bản đồ hiện lại sau khi bị nhặt |
 | `ROCKET_RESPAWN` | `45` | Giây để súng tên lửa hiện lại sau khi bị nhặt |
 | `UPGRADE_MAX` | `3` | Số cấp nâng cấp tối đa của một đội (tối đa 3 vì bảng sát thương có 4 mức) |
-| `NODE_ID` | | Tên máy này khi liên kết 2 server (`lan`, `vps`...). Để trống = tắt liên kết |
-| `LINK_SECRET` | | Khoá xác thực HMAC dùng chung của hai máy |
-| `LINK_PEER_URL` | | Bên gọi ra: `wss://domain/_link`. Bên chỉ nghe để trống |
-| `LINK_PATH` | `/_link` | Đường dẫn nhận link |
-| `LINK_ALLOW_IP` | | Chỉ nhận link từ các IP này |
-| `LINK_PING_SECONDS` | `5` | Chu kỳ ping giữa hai máy |
-| `LINK_TIMEOUT_SECONDS` | `15` | Không nhận gì quá chừng này giây thì coi link rớt |
-| `LINK_RECONNECT_MAX_SECONDS` | `30` | Độ trễ nối lại tối đa (tăng dần từ 1s) |
-| `LINK_ROOM_POLICY` | `local` | `local` = phòng mới đặt ở máy người tạo; hoặc tên `NODE_ID` của máy kia để luôn đặt ở đó |
-| `LINK_SHARE_ROOMS` | `true` | Hiện phòng của máy kia trong lobby |
-| `LINK_MAX_REMOTE` | `100` | Số socket từ xa tối đa qua link |
-| `LINK_REJOIN_WAIT_SECONDS` | `25` | Chờ link nối lại khi có người vào lại đúng lúc link rớt |
 
 Nếu bật `TUNNEL` và đặt `ALLOWED_HOSTS` khác `*`, nhớ thêm `TUNNEL_HOST` vào danh sách.
 
@@ -199,32 +187,3 @@ python main.py       # máy chủ dev
 Mở `http://127.0.0.1:8889/`. Với `HOST=0.0.0.0`, máy khác cùng Wi-Fi mở địa chỉ `http://<IP máy>:8889/` (máy chủ in sẵn địa chỉ này khi khởi động). Muốn chơi từ ngoài mạng, đặt `TUNNEL=true`, máy chủ sẽ tự tải và chạy `cloudflared`.
 
 Các phần như chém, đẩy lùi, hiệp sĩ và thần giữ cờ đều do máy chủ quyết định, nên **phải chạy lại máy chủ sau khi cập nhật `main.py`**, và nhớ tăng `version` trong `version.json` để các tab cũ tải lại bản mới.
-
-## Liên kết hai server (LAN + VPS)
-
-Dùng khi muốn học sinh ở hai nơi (vd. iPad trong lớp nối server LAN, học sinh ở nhà nối server VPS) chơi chung một trận. Mỗi trận vẫn nằm trong RAM của đúng một server (server "nhà" của phòng đó); server kia làm cổng biên, chuyển tiếp người chơi của nó tới đó.
-
-```
-iPad ─► Server LAN ◄══ link wss ══► Server VPS ◄─ học sinh bên ngoài
-         (nhà của phòng A)            (nhà của phòng B)
-```
-
-- **Link**: một WebSocket bền giữa hai máy, bên LAN chủ động gọi ra nên không cần mở cổng; đi qua domain cloudflared sẵn có (`wss://flag-ai.huskydg.io.vn/_link`). Hai bên xác thực nhau bằng HMAC trên `LINK_SECRET` và phải cùng `version` trong `version.json`.
-- **Phòng có nhà**: mã phòng mang tiền tố `NODE_ID` (`lan-4821`). Người ở máy kia vào phòng đó thì mọi sự kiện (`inp`, `chat`, `seat`...) được chuyển qua link; phản hồi đi ngược lại đúng người. Có thể gõ riêng 4 chữ số, miễn là chỉ khớp một phòng.
-- **Giảm lưu lượng**: snapshot trận gửi một bản cho mỗi nhóm (đội Xanh, đội Đỏ, khán giả) qua link, máy biên tự phát cho từng socket của nó.
-- **Lobby**: hai máy trao đổi danh sách phòng, nên lobby ở cả hai nơi thấy phòng của nhau (`LINK_SHARE_ROOMS`).
-- **Link rớt**: mỗi máy vẫn chạy phòng của mình. Máy nhà coi người từ xa như mất kết nối (giữ chỗ `REJOIN_SECONDS`); máy biên ngắt socket của họ để client tự nối lại và gửi `rejoin`. Nếu `rejoin` tới đúng lúc link đang rớt thì được giữ lại tối đa `LINK_REJOIN_WAIT_SECONDS` chờ link nối lại.
-- **Ghép trận nhanh** (`queue`) chỉ chạy trên máy mà người chơi đang nối, không ghép chéo hai máy.
-
-Cấu hình tối thiểu:
-
-```
-# máy LAN (.env)                          # máy VPS (.env)
-NODE_ID=lan                               NODE_ID=vps
-LINK_SECRET=chuoi-bi-mat-dai              LINK_SECRET=chuoi-bi-mat-dai
-LINK_PEER_URL=wss://flag-ai.huskydg.io.vn/_link
-```
-
-Trên VPS, domain phải trỏ tới `http://localhost:PORT` trong cloudflared (đường `/_link` đi qua WebSocket được) và nằm trong `ALLOWED_HOSTS` nếu bạn đã siết danh sách này. Chạy Gunicorn vẫn dùng đúng 1 worker; mỗi link tốn thêm 3 luồng, tính vào `GUNICORN_THREADS`.
-
-Lưu ý: chỉ đặt `LINK_PEER_URL` ở một bên. Cả hai máy phải chạy cùng bản `main.py` và cùng `version.json`. Mỗi người chơi từ xa gửi `inp` khoảng 20 gói/giây qua link, vì vậy `LINK_MAX_REMOTE=100` là mức hợp lý.
