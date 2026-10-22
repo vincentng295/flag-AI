@@ -8,11 +8,12 @@ Cướp Cờ Đáp Án AI - máy chủ game chiến thuật 1v1 .. 5v5 (Flask + 
   thì đội đó +100 nếu đúng, -50 nếu sai. Trong lúc chơi KHÔNG ai biết cờ nào đúng.
 - Chủ phòng có thể tạm dừng cả trận. Có Cloudflare Tunnel (cloudflared) giống snake-AI.
 - question.json KHÔNG được phục vụ ra web để học sinh không xem được đáp án.
+- Có thể liên kết 2 server (vd. máy LAN + VPS) để học sinh hai nơi chơi chung một trận: xem NODE_ID / LINK_* và README.
 
 Cấu hình: copy .env.example thành .env (cạnh file này). Chạy: python gunicorn.py (Gunicorn, khuyên dùng) hoặc python main.py (máy chủ dev)
 """
 import io, os, re, sys, ssl, json, math, time, random, shutil, socket, hashlib, hmac, platform, tarfile
-import threading, subprocess, urllib.request, traceback
+import threading, subprocess, urllib.request, traceback, queue
 from flask import Flask, send_from_directory, abort, request
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from socketio.exceptions import ConnectionRefusedError as RefuseConn
@@ -22,6 +23,14 @@ try:  # long-polling: mặc định chỉ nhận 16 gói/lượt POST, client g�
     _eio_payload.Payload.max_decode_packets = 600
 except Exception:
     pass
+try:  # liên kết 2 server: máy nghe dùng flask-sock, máy gọi ra dùng simple_websocket.Client (cả hai đã có sẵn cùng Flask-SocketIO)
+    from flask_sock import Sock
+except ImportError:
+    Sock = None
+try:
+    import simple_websocket
+except ImportError:
+    simple_websocket = None
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
@@ -84,6 +93,22 @@ def load_version():
 
 
 VERSION_NAME, VERSION = load_version()
+
+# ---- Liên kết 2 server (federation): xem README, mục "Liên kết hai server" ----
+NODE_ID = re.sub(r"[^a-z0-9_]", "", os.getenv("NODE_ID", "").strip().lower())   # tên máy này, làm tiền tố mã phòng
+LINK_SECRET = os.getenv("LINK_SECRET", "").strip()                               # khoá dùng chung để xác thực HMAC
+LINK_PEER_URL = os.getenv("LINK_PEER_URL", "").strip()                           # bên gọi ra: wss://domain/_link ; trống = chỉ nghe
+LINK_PATH = "/" + (os.getenv("LINK_PATH", "/_link").strip().strip("/") or "_link")
+LINK_ALLOW_IP = {x.strip() for x in os.getenv("LINK_ALLOW_IP", "").split(",") if x.strip()}
+LINK_PING_S = max(1.0, env_num("LINK_PING_SECONDS", 5.0))
+LINK_TIMEOUT_S = max(LINK_PING_S * 2, env_num("LINK_TIMEOUT_SECONDS", 15.0))
+LINK_RECONNECT_MAX_S = max(1.0, env_num("LINK_RECONNECT_MAX_SECONDS", 30.0))
+LINK_ROOM_POLICY = os.getenv("LINK_ROOM_POLICY", "local").strip().lower() or "local"   # local | <NODE_ID của máy kia>
+LINK_SHARE_ROOMS = env_bool("LINK_SHARE_ROOMS", True)
+LINK_MAX_REMOTE = env_num("LINK_MAX_REMOTE", 100)
+LINK_REJOIN_WAIT_S = env_num("LINK_REJOIN_WAIT_SECONDS", 25.0)    # người vào lại lúc link đang rớt: chờ link nối lại tối đa chừng này giây
+LINK_QUEUE_MAX = 3000                                              # hàng đợi gửi quá dài thì bỏ bớt snapshot/input cũ
+FED = bool(NODE_ID and LINK_SECRET)
 
 READ_S, PLAY_S, RESULT_S = env_num("READ_SECONDS", 10), env_num("PLAY_SECONDS", 170), env_num("RESULT_SECONDS", 12)
 HP, DOWN_S = env_num("HP", 3), env_num("DOWN_SECONDS", 5.0)
@@ -152,6 +177,9 @@ app = Flask(__name__)
 sio = SocketIO(app, async_mode="threading", cors_allowed_origins=ORIGINS)
 LOCK = threading.RLock()
 ROOMS, SID_ROOM = {}, {}
+REMOTE_ROOMS = []   # danh sách phòng của máy kia (nhận qua link), chỉ để hiện ở lobby
+BOUND = {}          # [máy biên] sid của socket đang được chuyển tiếp tới phòng nhà ở máy kia -> mã phòng
+REMOTE_OPEN = set() # [máy nhà] sid (phía máy biên) của người chơi từ xa đang mở
 TOK = {}  # sid -> token trình duyệt (để nhận ra học sinh khi vào lại)
 
 
@@ -292,19 +320,26 @@ def cap(r):
 
 
 def info(r):
-    return {"code": r.code, "name": r.name, "size": r.size, "rounds": r.rounds, "pw": bool(r.pw), "state": r.state,
+    return {"code": r.code, "node": NODE_ID, "name": r.name, "size": r.size, "rounds": r.rounds, "pw": bool(r.pw), "state": r.state,
             "pve": r.pve, "eve": r.eve, "max": cap(r), "n": sum(1 for q in r.players.values() if not q.bot), "ns": len(r.specs),
             "host": (r.players.get(r.host) or r.specs.get(r.host) or P(0, "", 0)).pid,
             "teams": [[{"pid": p.pid, "nick": p.nick} for p in r.players.values() if p.team == t and not p.bot] for t in (0, 1)],
             "specs": [{"pid": p.pid, "nick": p.nick} for p in r.specs.values()]}
 
 
+def local_rooms_list():
+    return [{k: v for k, v in info(r).items() if k not in ("teams", "specs")} for r in list(ROOMS.values())]
+
+
 def rooms_list():
-    return [{k: v for k, v in info(r).items() if k not in ("teams", "specs")} for r in ROOMS.values()]
+    lst = local_rooms_list()
+    if FED and LINK_SHARE_ROOMS and LINK.up:
+        lst = lst + list(REMOTE_ROOMS)   # phòng nhà của máy kia: bấm vào là vào qua link
+    return lst
 
 
 def push(r):
-    sio.emit("room", info(r), to=r.code)
+    room_emit(r, "room", info(r))
     sio.emit("rooms", rooms_list())
 
 
@@ -318,7 +353,7 @@ def add_player(r, sid, nick, spec=False):
         r.players[sid] = p
     SID_ROOM[sid] = r
     p.tok = TOK.get(sid, "")
-    sio.server.enter_room(sid, r.code, namespace="/")  # không dùng join_room: nó cần request context, mà ghép trận chạy ở luồng nền
+    _enter_room(sid, r.code)  # không dùng join_room: nó cần request context, mà ghép trận chạy ở luồng nền
     return p
 
 
@@ -329,10 +364,7 @@ def drop(sid):
         return
     p = r.players.get(sid)
     r.specs.pop(sid, None)
-    try:
-        leave_room(r.code, sid=sid)
-    except Exception:
-        pass
+    _leave_room(sid, r.code)
     if p and r.state == "playing" and not r.dead and not r.abort and p.team in (0, 1) and not p.bot:
         to_bot(r, sid, p)  # đang giữa trận: nhân vật KHÔNG rời đi mà do bot điều khiển tiếp (cờ đang vác vẫn do bot mang)
     else:
@@ -361,10 +393,8 @@ def _connect(auth=None):
     emit("rooms", rooms_list())
 
 
-@sio.on("disconnect")
-def _disc():
+def do_disc(sid):
     with LOCK:
-        sid = request.sid
         r = SID_ROOM.get(sid); p = r.players.get(sid) if r else None
         TOK.pop(sid, None); CHAT_LAST.pop(sid, None)
         if p and not p.bot and p.tok and r.state == "playing" and REJOIN_S > 0 and not r.dead:
@@ -374,55 +404,49 @@ def _disc():
         drop(sid)
 
 
-@sio.on("create")
-def on_create(d):
-    d = d or {}; sid = request.sid
+def do_create(sid, d):
+    d = d or {}
     nick = clean(d.get("nick"), 14) or "Người chơi"
     name = clean(d.get("name"), 24) or "Phòng của " + nick
     with LOCK:
         drop(sid)
-        code = str(random.randint(1000, 9999))
-        while code in ROOMS:
-            code = str(random.randint(1000, 9999))
+        code = new_code()
         r = Room(code, name, hpw(clean(d.get("pw"), 20)), num(d.get("size"), 1, 5, 3), num(d.get("rounds"), 1, 5, 3), sid, bool(d.get("pve")), bool(d.get("eve")))
         ROOMS[code] = r
         p = add_player(r, sid, nick)
-        emit("me", {"pid": p.pid}); push(r)
+        E(sid, "me", {"pid": p.pid}); push(r)
 
 
-@sio.on("join")
-def on_join(d):
-    d = d or {}; sid = request.sid
+def do_join(sid, d):
+    d = d or {}
     nick = clean(d.get("nick"), 14) or "Người chơi"
     with LOCK:
         r = ROOMS.get(str(d.get("code")))
         if not r:
-            return emit("err", "Phòng không còn tồn tại.")
+            return E(sid, "err", "Phòng không còn tồn tại.")
         if r.pw and not hmac.compare_digest(r.pw, hpw(clean(d.get("pw"), 20))):
-            return emit("err", "Sai mật khẩu phòng.")
+            return E(sid, "err", "Sai mật khẩu phòng.")
         if len(r.specs) >= MAX_SPECS and (r.state != "lobby" or sum(1 for q in r.players.values() if not q.bot) >= cap(r)):
-            return emit("err", "Ghế khán giả đã đầy.")
+            return E(sid, "err", "Ghế khán giả đã đầy.")
         drop(sid)
         # phòng đang chơi hoặc đã đủ người: vào ghế khán giả
         spec = r.state != "lobby" or len(r.players) >= cap(r)
         p = add_player(r, sid, nick, spec)
-        emit("me", {"pid": p.pid}); push(r)
+        E(sid, "me", {"pid": p.pid}); push(r)
         if r.state == "playing" and r.q:
-            emit("rd", {"i": r.round, "n": r.rounds, "q": {"question": r.q["question"], "options": r.q["options"]},
+            E(sid, "rd", {"i": r.round, "n": r.rounds, "q": {"question": r.q["question"], "options": r.q["options"]},
                         "players": roster(r), "map": MAPINFO})
 
 
-@sio.on("leave")
-def on_leave():
+def do_leave(sid, d=None):
     with LOCK:
-        drop(request.sid)
-    emit("left")
+        drop(sid)
+    E(sid, "left")
 
 
-@sio.on("rejoin")
-def on_rejoin(d):
+def do_rejoin(sid, d):
     """Học sinh lỡ đóng trang / mất mạng giữa trận: nối lại đúng người chơi cũ (khớp token của trình duyệt)."""
-    d = d or {}; sid = request.sid
+    d = d or {}
     tok = TOK.get(sid, "")
     with LOCK:
         r = ROOMS.get(str(d.get("code")))
@@ -431,15 +455,12 @@ def on_rejoin(d):
             old = next((k for k, q in r.players.items()
                         if not q.bot and q.tok and hmac.compare_digest(q.tok.encode(), tok.encode())), None)
         if old is None:
-            return emit("rejoin_fail", "Không kết nối lại được: trận đã kết thúc hoặc đã hết thời gian chờ.")
+            return E(sid, "rejoin_fail", "Không kết nối lại được: trận đã kết thúc hoặc đã hết thời gian chờ.")
         p = r.players.pop(old)
         SID_ROOM.pop(old, None)
-        try:
-            leave_room(r.code, sid=old)
-        except Exception:
-            pass
+        _leave_room(old, r.code)
         if not p.away:
-            sio.emit("kicked", to=old)  # kết nối cũ vẫn còn sống (tab khác): báo cho nó biết
+            E(old, "kicked")  # kết nối cũ vẫn còn sống (tab khác): báo cho nó biết
         was_away = p.away
         p.sid, p.away = sid, False
         p.auto = False; p.act = time.time(); p.ai = new_ai()
@@ -448,19 +469,17 @@ def on_rejoin(d):
         p.dx = p.dy = 0.0; p.fire = p.fl = p.sh = False
         p.ep += 1; p.tpos = time.time() + 2.0
         r.players[sid] = p; SID_ROOM[sid] = r
-        join_room(r.code, sid=sid)
+        _enter_room(sid, r.code)
         if r.host == old:
             r.host = sid
-        emit("rejoined"); emit("me", {"pid": p.pid}); push(r)
+        E(sid, "rejoined"); E(sid, "me", {"pid": p.pid}); push(r)
         if r.q:
-            emit("rd", {"i": r.round, "n": r.rounds, "q": {"question": r.q["question"], "options": r.q["options"]},
+            E(sid, "rd", {"i": r.round, "n": r.rounds, "q": {"question": r.q["question"], "options": r.q["options"]},
                         "players": roster(r), "map": MAPINFO})
 
 
-@sio.on("seat")
-def on_seat(d):
+def do_seat(sid, d):
     """Đổi chỗ ngồi trong phòng chờ: 0/1 = đội, 2 = ghế khán giả."""
-    sid = request.sid
     with LOCK:
         r = SID_ROOM.get(sid)
         if not r or r.state != "lobby":
@@ -476,33 +495,32 @@ def on_seat(d):
             return
         if t == 2:
             if len(r.specs) >= MAX_SPECS:
-                return emit("err", "Ghế khán giả đã đầy.")
+                return E(sid, "err", "Ghế khán giả đã đầy.")
             r.players.pop(sid, None); p.team = -1; r.specs[sid] = p
         else:
             if r.eve:
-                return emit("err", "Phòng EvE: cả hai đội do máy điều khiển, bạn chỉ xem được.")
+                return E(sid, "err", "Phòng EvE: cả hai đội do máy điều khiển, bạn chỉ xem được.")
             if r.pve and t == 1:
-                return emit("err", "Phòng PvE: đội Đỏ do máy điều khiển.")
+                return E(sid, "err", "Phòng PvE: đội Đỏ do máy điều khiển.")
             if sum(1 for q in r.players.values() if q.team == t) >= r.size:
-                return emit("err", "Đội này đã đủ người.")
+                return E(sid, "err", "Đội này đã đủ người.")
             r.specs.pop(sid, None); p.team = t; r.players[sid] = p
         push(r)
 
 
-@sio.on("team")
-def on_team():
+def do_team(sid, d=None):
     with LOCK:
-        r = SID_ROOM.get(request.sid)
+        r = SID_ROOM.get(sid)
         if not r or r.state != "lobby":
             return
-        p = r.players.get(request.sid)
+        p = r.players.get(sid)
         if not p:
             return
         if r.pve or r.eve:
-            return emit("err", "Phòng PvE: đội Đỏ do máy điều khiển." if r.pve else "Phòng EvE: cả hai đội do máy điều khiển.")
+            return E(sid, "err", "Phòng PvE: đội Đỏ do máy điều khiển." if r.pve else "Phòng EvE: cả hai đội do máy điều khiển.")
         t = 1 - p.team
         if sum(1 for q in r.players.values() if q.team == t) >= r.size:
-            return emit("err", "Đội kia đã đủ người.")
+            return E(sid, "err", "Đội kia đã đủ người.")
         p.team = t; push(r)
 
 
@@ -534,9 +552,7 @@ def try_match(size, force=False):
     for sid, _ in grp:
         MQT.pop(sid, None)
     random.shuffle(grp)
-    code = str(random.randint(1000, 9999))
-    while code in ROOMS:
-        code = str(random.randint(1000, 9999))
+    code = new_code()
     r = Room(code, f"Ghép nhanh {size}v{size}", "", size, 3, grp[0][0])
     ROOMS[code] = r
     r.fill = len(grp) < need  # thiếu người: bot sẽ được thêm âm thầm khi trận bắt đầu
@@ -554,6 +570,8 @@ def on_queue(d):
     d = d or {}; sid = request.sid
     size = num(d.get("size"), 1, 5, 2)
     nick = clean(d.get("nick"), 14) or "Người chơi"
+    if FED:
+        edge_unbind(sid, drop_remote=True)  # đang ở phòng của máy kia: rời trước, hàng chờ ghép trận chỉ chạy trên máy này
     with LOCK:
         drop(sid)  # rời phòng/hàng chờ cũ
         MQ.setdefault(size, []).append((sid, nick))
@@ -585,37 +603,34 @@ def on_unqueue():
         unq(request.sid)
 
 
-@sio.on("start")
-def on_start():
+def do_start(sid, d=None):
     with LOCK:
-        r = SID_ROOM.get(request.sid)
-        if not r or r.host != request.sid or r.state != "lobby":
+        r = SID_ROOM.get(sid)
+        if not r or r.host != sid or r.state != "lobby":
             return
         if r.eve:
             pass  # EvE: không cần người chơi, máy tự lập cả hai đội khi trận bắt đầu
         elif r.pve:
             if not any(p.team == 0 for p in r.players.values()):
-                return emit("err", "Cần ít nhất 1 người chơi ở đội Xanh.")
+                return E(sid, "err", "Cần ít nhất 1 người chơi ở đội Xanh.")
         elif not r.fill and (not any(p.team == 0 for p in r.players.values()) or not any(p.team == 1 for p in r.players.values())):
-            return emit("err", "Mỗi đội cần ít nhất 1 người.")
+            return E(sid, "err", "Mỗi đội cần ít nhất 1 người.")
         r.state = "playing"; r.abort = False; r.paused = False; r.beat = time.time()
         sio.start_background_task(run_match, r)
         push(r)
 
 
-@sio.on("pause")
-def on_pause():
+def do_pause(sid, d=None):
     with LOCK:
-        r = SID_ROOM.get(request.sid)
-        if r and r.host == request.sid and r.state == "playing" and r.phase in ("read", "play"):
+        r = SID_ROOM.get(sid)
+        if r and r.host == sid and r.state == "playing" and r.phase in ("read", "play"):
             r.paused = not r.paused
 
 
-@sio.on("drop")
-def on_drop():
+def do_drop(sid, d=None):
     with LOCK:
-        r = SID_ROOM.get(request.sid)
-        p = r.players.get(request.sid) if r else None
+        r = SID_ROOM.get(sid)
+        p = r.players.get(sid) if r else None
         if p and p.carry >= 0 and p.down <= 0 and r.phase == "play" and not r.paused:
             r.ev.append(["nf", 3, p.pid, r.flags[p.carry]["letter"], -1])
             drop_flag(r, p)
@@ -628,9 +643,7 @@ CHAT_MAX, CHAT_GAP = 120, 0.6   # độ dài tối đa / giãn cách tối thi�
 CHAT_LAST = {}
 
 
-@sio.on("chat")
-def on_chat(d):
-    sid = request.sid
+def do_chat(sid, d):
     if not isinstance(d, dict):
         return
     m = " ".join(clean(d.get("m"), CHAT_MAX).split())
@@ -646,7 +659,7 @@ def on_chat(d):
         ch = "t" if d.get("ch") == "t" else "a"
         msg = {"pid": p.pid, "nick": p.nick, "team": p.team, "ch": ch, "m": m}
         if ch == "a":
-            sio.emit("chat", msg, to=r.code)
+            room_emit(r, "chat", msg)
         else:  # kênh đội: chỉ đồng đội (khán giả chat với nhau)
             group = r.specs.values() if p.team < 0 else r.players.values()
             for q in list(group):
@@ -654,12 +667,11 @@ def on_chat(d):
                     _emit_safe("chat", msg, q.sid)
 
 
-@sio.on("inp")
-def on_inp(d):
-    r = SID_ROOM.get(request.sid)
+def do_inp(sid, d):
+    r = SID_ROOM.get(sid)
     if not r:
         return
-    p = r.players.get(request.sid)
+    p = r.players.get(sid)
     if not p:
         return
     try:
@@ -693,6 +705,506 @@ def on_inp(d):
                 p.ep += 1; p.tpos = time.time() + 2.0  # quá nhanh hoặc xuyên tường: kéo client về vị trí máy chủ
     except Exception:
         pass
+
+
+# =====================================================================================================
+# LIÊN KẾT HAI SERVER (federation)
+#
+# Mỗi phòng nằm trong RAM của đúng một máy ("nhà" của phòng, mã phòng mang tiền tố NODE_ID, vd. "lan-4821").
+# Máy kia chỉ là CỔNG BIÊN: socket của học sinh vẫn nối vào máy này, nhưng mọi sự kiện của phòng nhà ở máy kia
+# được chuyển qua một đường WebSocket bền ("link"), còn phản hồi đi ngược lại theo đúng sid.
+#   - Máy nhà thấy người từ xa là một sid ảo "r:<sid bên máy biên>"; logic game không đổi, chỉ có lớp gửi (E / emit_many /
+#     room_emit) biết sid ảo thì đẩy vào link thay vì sio.emit.
+#   - Snapshot "st" gửi một bản cho mỗi nhóm (đội 0, đội 1, khán giả) qua link, máy biên tự phát cho từng socket.
+#   - Link rớt: máy nhà coi người từ xa như mất kết nối (REJOIN_SECONDS giữ chỗ), máy biên ngắt socket của họ để
+#     client tự nối lại + gửi "rejoin" như thường; "rejoin" đến lúc link đang rớt thì được giữ lại chờ link nối lại.
+# =====================================================================================================
+def is_remote(sid):
+    return isinstance(sid, str) and sid.startswith("r:")
+
+
+def _enter_room(sid, code):
+    """Cho socket CỤC BỘ vào kênh của phòng (người chơi từ xa không có socket ở máy này nên không vào kênh)."""
+    if is_remote(sid):
+        return
+    try:
+        sio.server.enter_room(sid, code, namespace="/")   # không dùng join_room/leave_room của Flask: cần request context
+    except Exception:
+        pass
+
+
+def _leave_room(sid, code):
+    if is_remote(sid):
+        return
+    try:
+        sio.server.leave_room(sid, code, namespace="/")
+    except Exception:
+        pass
+
+
+def new_code():
+    while True:
+        c = f"{NODE_ID}-{random.randint(1000, 9999)}" if FED else str(random.randint(1000, 9999))
+        if c not in ROOMS:
+            return c
+
+
+def home_of(code):
+    """Tên máy nhà của một mã phòng (mã không tiền tố = phòng của máy này)."""
+    return code.split("-", 1)[0] if "-" in code else NODE_ID
+
+
+def resolve_code(raw):
+    """Chuẩn hoá mã phòng người dùng gõ. Gõ riêng 4 chữ số thì tự khớp với phòng có đuôi đó (nếu duy nhất)."""
+    c = str(raw or "").strip().lower()
+    if FED and c.isdigit():
+        hits = [x for x in list(ROOMS) + [r.get("code", "") for r in list(REMOTE_ROOMS)] if x.rsplit("-", 1)[-1] == c]
+        if len(hits) == 1:
+            return hits[0]
+    return c
+
+
+# ---------- lớp gửi thống nhất ----------
+def E(sid, ev, data=None):
+    """Gửi một sự kiện tới MỘT người: socket cục bộ -> sio.emit, người từ xa (sid "r:...") -> qua link."""
+    if is_remote(sid):
+        LINK.send({"t": "to", "sid": sid[2:], "ev": ev, "d": data})
+        return
+    try:
+        sio.emit(ev, data, to=sid)
+    except Exception:
+        pass
+
+
+def emit_many(ev, data, sids, droppable=False):
+    """Gửi cùng một gói cho nhiều người; phần người từ xa chỉ tốn MỘT gói trên link."""
+    rem = []
+    for s in sids:
+        if is_remote(s):
+            rem.append(s[2:])
+        else:
+            try:
+                sio.emit(ev, data, to=s)
+            except Exception:
+                pass
+    if rem:
+        LINK.send({"t": "mc", "sids": rem, "ev": ev, "d": data}, droppable)
+
+
+def room_emit(r, ev, data):
+    """Phát cho cả phòng: kênh socket.io của phòng (người cục bộ) + một gói qua link cho toàn bộ người từ xa."""
+    sio.emit(ev, data, to=r.code)
+    if FED and LINK.up:
+        rem = [k[2:] for k, q in list(r.players.items()) + list(r.specs.items()) if is_remote(k) and not q.away]
+        if rem:
+            LINK.send({"t": "mc", "sids": rem, "ev": ev, "d": data})
+
+
+# ---------- định tuyến sự kiện của client ----------
+def route_local(sid, ev, d):
+    """Mọi sự kiện lobby/phòng của một socket cục bộ đi qua đây: xử lý tại chỗ, hoặc (nếu phòng nhà ở máy kia) chuyển qua link."""
+    h = HANDLERS[ev]
+    if not FED:
+        return h(sid, d)
+    bound = sid in BOUND
+    if ev in ("join", "rejoin"):
+        code = resolve_code(d.get("code") if isinstance(d, dict) else None)
+        d = dict(d, code=code) if isinstance(d, dict) else d
+        home = home_of(code)
+        if home == NODE_ID:  # phòng nhà ở máy này
+            if bound:
+                edge_unbind(sid, drop_remote=True)
+            return h(sid, d)
+        if not LINK.up:
+            if ev == "rejoin":  # link đang rớt: giữ yêu cầu vào lại, chờ link nối lại thay vì báo hỏng ngay
+                sio.start_background_task(edge_rejoin_wait, sid, d)
+                return
+            return E(sid, "err", "Máy chủ của phòng này đang mất liên kết, thử lại sau ít phút.")
+        if LINK.peer != home:
+            return E(sid, "err", "Phòng không còn tồn tại.")
+        if not edge_bind(sid, code):
+            return
+        return edge_forward(sid, ev, d)
+    if ev == "create":
+        if bound:
+            edge_unbind(sid, drop_remote=True)
+        if LINK.up and LINK_ROOM_POLICY not in ("local", NODE_ID) and LINK.peer == LINK_ROOM_POLICY:
+            if edge_bind(sid, "*"):   # tạo phòng ngay trên máy kia (chính sách LINK_ROOM_POLICY)
+                return edge_forward(sid, ev, d)
+            return
+        return h(sid, d)
+    if bound:
+        return edge_forward(sid, ev, d)
+    return h(sid, d)
+
+
+def edge_bind(sid, code):
+    if sid not in BOUND:
+        if len(BOUND) >= LINK_MAX_REMOTE:
+            E(sid, "err", "Máy chủ liên kết đang đầy người, thử lại sau.")
+            return False
+        with LOCK:
+            drop(sid)   # rời phòng/hàng chờ cũ ở máy này, giống hành vi vào phòng bình thường
+        BOUND[sid] = code
+        LINK.send({"t": "open", "sid": sid, "tok": TOK.get(sid, "")})
+    else:
+        BOUND[sid] = code
+    return True
+
+
+def edge_forward(sid, ev, d):
+    LINK.send({"t": "ev", "sid": sid, "ev": ev, "d": d}, ev == "inp")
+
+
+def edge_unbind(sid, drop_remote=False):
+    if BOUND.pop(sid, None) is None:
+        return False
+    if drop_remote:
+        LINK.send({"t": "close", "sid": sid, "drop": 1})   # máy nhà cho người này rời phòng (không phát "left")
+    return True
+
+
+def edge_close(sid):
+    """Socket của máy này đóng: báo máy nhà (máy nhà xử lý như mất kết nối: giữa trận thì giữ chỗ chờ rejoin)."""
+    if BOUND.pop(sid, None) is None:
+        return False
+    LINK.send({"t": "close", "sid": sid})
+    return True
+
+
+def edge_rejoin_wait(sid, d):
+    end = time.time() + LINK_REJOIN_WAIT_S
+    while time.time() < end:
+        if sid not in TOK:   # socket đã đóng
+            return
+        if LINK.up:
+            return route_local(sid, "rejoin", d)
+        sio.sleep(0.5)
+    E(sid, "rejoin_fail", "Không kết nối lại được: máy chủ của phòng đang mất liên kết.")
+
+
+HANDLERS = {"create": do_create, "join": do_join, "leave": do_leave, "rejoin": do_rejoin, "seat": do_seat, "team": do_team,
+            "start": do_start, "pause": do_pause, "drop": do_drop, "chat": do_chat, "inp": do_inp}
+
+
+def _reg(ev):
+    @sio.on(ev)
+    def _h(*a):
+        route_local(request.sid, ev, a[0] if a else None)
+    return _h
+
+
+for _ev in HANDLERS:
+    _reg(_ev)
+
+
+@sio.on("disconnect")
+def _disc():
+    sid = request.sid
+    if FED and edge_close(sid):
+        TOK.pop(sid, None); CHAT_LAST.pop(sid, None)
+        return
+    do_disc(sid)
+
+
+# ---------- link ----------
+class _Link:
+    def __init__(s):
+        s.up = False; s.peer = ""; s.ws = None; s.gen = 0
+        s.q = queue.Queue(); s.last_rx = 0.0; s.lock = threading.Lock()
+        s.rooms_sig = ""; s.rooms_t = 0.0
+
+    def send(s, msg, droppable=False):
+        if not s.up:
+            return False
+        q = s.q
+        if droppable and q.qsize() > LINK_QUEUE_MAX:
+            return False   # link nghẽn: bỏ bớt snapshot/input cũ, gói điều khiển thì vẫn giữ
+        try:
+            q.put(json.dumps(msg, ensure_ascii=False, separators=(",", ":")))
+        except (TypeError, ValueError):
+            return False
+        return True
+
+
+LINK = _Link()
+
+
+def _close_quiet(ws):
+    try:
+        ws.close()
+    except Exception:
+        pass
+
+
+def _mac(role, n1, n2, node):
+    return hmac.new(LINK_SECRET.encode(), f"{role}|{n1}|{n2}|{node}|{VERSION}".encode(), hashlib.sha256).hexdigest()
+
+
+def _node_name(v):
+    return re.sub(r"[^a-z0-9_]", "", str(v or "").lower())[:20]
+
+
+def link_accept(ws, ip):
+    """Phía nghe: thử thách HMAC hai chiều. Trả về tên máy kia nếu xác thực đạt."""
+    if LINK_ALLOW_IP and ip not in LINK_ALLOW_IP:
+        print(f"[!] Link: từ chối IP {ip} (không nằm trong LINK_ALLOW_IP)")
+        return None
+    ns = os.urandom(16).hex()
+    ws.send(json.dumps({"t": "hello", "node": NODE_ID, "ver": VERSION, "n": ns}))
+    m = json.loads(ws.receive(timeout=10) or "{}")
+    peer, nc = _node_name(m.get("node")), str(m.get("n", ""))[:64]
+    if (m.get("t") != "auth" or not peer or peer == NODE_ID or str(m.get("ver")) != str(VERSION)
+            or not hmac.compare_digest(str(m.get("mac", "")), _mac("c", ns, nc, peer))):
+        print(f"[!] Link: xác thực thất bại (node={peer!r}, ver={m.get('ver')!r}) từ {ip}")
+        try:
+            ws.send(json.dumps({"t": "no"}))
+        except Exception:
+            pass
+        return None
+    ws.send(json.dumps({"t": "ok", "mac": _mac("s", nc, ns, NODE_ID)}))
+    return peer
+
+
+def link_connect(ws):
+    """Phía gọi ra: trả lời thử thách rồi kiểm tra máy kia cũng biết khoá."""
+    m = json.loads(ws.receive(timeout=10) or "{}")
+    peer, ns = _node_name(m.get("node")), str(m.get("n", ""))[:64]
+    if m.get("t") != "hello" or not peer or peer == NODE_ID:
+        raise RuntimeError("máy kia không phải server game liên kết (hoặc trùng NODE_ID)")
+    if str(m.get("ver")) != str(VERSION):
+        raise RuntimeError(f"khác phiên bản game (máy kia {m.get('ver')}, máy này {VERSION})")
+    nc = os.urandom(16).hex()
+    ws.send(json.dumps({"t": "auth", "node": NODE_ID, "ver": VERSION, "n": nc, "mac": _mac("c", ns, nc, NODE_ID)}))
+    m = json.loads(ws.receive(timeout=10) or "{}")
+    if m.get("t") != "ok" or not hmac.compare_digest(str(m.get("mac", "")), _mac("s", nc, ns, peer)):
+        raise RuntimeError("máy kia từ chối hoặc sai LINK_SECRET")
+    return peer
+
+
+def link_session(ws, peer):
+    """Chạy suốt một phiên link (trong luồng gọi). Trả về khi link đóng/rớt."""
+    with LINK.lock:
+        was_up, stale = LINK.up, LINK.ws
+        LINK.gen += 1; gen = LINK.gen
+        LINK.up = False
+    if was_up:   # link cũ còn sót (nửa chết): thay bằng link mới, dọn trạng thái của link cũ
+        _close_quiet(stale); link_cleanup()
+    with LINK.lock:
+        if LINK.gen != gen:
+            _close_quiet(ws); return
+        LINK.ws, LINK.peer, LINK.q, LINK.last_rx, LINK.rooms_sig, LINK.rooms_t, LINK.up = ws, peer, queue.Queue(), time.time(), "", 0.0, True
+    q = LINK.q
+    print(f"[*] Link: ĐÃ NỐI với máy '{peer}'")
+
+    def alive():
+        return LINK.gen == gen and LINK.up
+
+    def writer():
+        while alive():
+            try:
+                s = q.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            try:
+                ws.send(s)
+            except Exception:
+                _close_quiet(ws); return
+
+    def maint():
+        last_ping = 0.0
+        while alive():
+            now = time.time()
+            if now - last_ping >= LINK_PING_S:
+                LINK.send({"t": "p"}); last_ping = now
+            link_send_rooms()
+            time.sleep(0.5)
+
+    threading.Thread(target=writer, daemon=True).start()
+    threading.Thread(target=maint, daemon=True).start()
+    try:
+        link_send_rooms(force=True)
+        while LINK.gen == gen:
+            try:
+                raw = ws.receive(timeout=1.0)
+            except Exception:
+                break
+            if raw is None:
+                if time.time() - LINK.last_rx > LINK_TIMEOUT_S:
+                    print(f"[!] Link: quá {LINK_TIMEOUT_S:g}s không nhận được gì, coi như rớt")
+                    break
+                continue
+            LINK.last_rx = time.time()
+            if len(raw) > 2_000_000:
+                continue
+            try:
+                link_dispatch(json.loads(raw))
+            except Exception:
+                traceback.print_exc()
+    finally:
+        _close_quiet(ws)
+        with LINK.lock:
+            cur = LINK.gen == gen and LINK.up
+            if cur:
+                LINK.up = False
+        if cur:
+            print(f"[!] Link: MẤT liên kết với máy '{peer}'")
+            link_cleanup()
+
+
+def link_send_rooms(force=False):
+    now = time.time()
+    lst = local_rooms_list()
+    sig = json.dumps(lst, ensure_ascii=False, sort_keys=True)
+    if force or sig != LINK.rooms_sig or now - LINK.rooms_t > 10:
+        LINK.rooms_sig, LINK.rooms_t = sig, now
+        LINK.send({"t": "rooms", "l": lst})
+
+
+def link_cleanup():
+    """Link rớt: (máy nhà) người từ xa coi như mất kết nối; (máy biên) ngắt socket đang chuyển tiếp để client tự rejoin."""
+    with LOCK:
+        for sid in list(REMOTE_OPEN):
+            REMOTE_OPEN.discard(sid)
+            try:
+                do_disc("r:" + sid)
+            except Exception:
+                traceback.print_exc()
+    REMOTE_ROOMS.clear()
+    sids = list(BOUND); BOUND.clear()
+    for s in sids:
+        try:
+            sio.server.disconnect(s, namespace="/")
+        except Exception:
+            pass
+    try:
+        sio.emit("rooms", rooms_list())
+    except Exception:
+        pass
+
+
+_NO_AUTO_UNBIND = ("join", "create", "rejoin", "leave")
+
+
+def link_dispatch(m):
+    t = m.get("t")
+    if t == "p":
+        return
+    if t == "rooms":   # máy kia gửi danh sách phòng nhà của họ
+        lst = [{k: v for k, v in x.items() if isinstance(k, str)} for x in (m.get("l") or [])[:300]
+               if isinstance(x, dict) and isinstance(x.get("code"), str)]
+        if lst != REMOTE_ROOMS:
+            REMOTE_ROOMS[:] = lst
+            sio.emit("rooms", rooms_list())
+        return
+    # ---- máy nhà: nhận việc từ máy biên ----
+    if t == "open":
+        sid = str(m.get("sid", ""))[:64]
+        if not sid:
+            return
+        if sid not in REMOTE_OPEN and len(REMOTE_OPEN) >= LINK_MAX_REMOTE:
+            LINK.send({"t": "to", "sid": sid, "ev": "err", "d": "Máy chủ của phòng đang đầy người, thử lại sau."})
+            LINK.send({"t": "unbind", "sid": sid})
+            return
+        REMOTE_OPEN.add(sid)
+        TOK["r:" + sid] = clean(m.get("tok"), 40)
+        return
+    if t == "ev":
+        sid, ev = str(m.get("sid", ""))[:64], m.get("ev")
+        if ev not in HANDLERS:
+            return
+        if sid not in REMOTE_OPEN or (ev not in _NO_AUTO_UNBIND and ("r:" + sid) not in SID_ROOM):
+            LINK.send({"t": "unbind", "sid": sid})   # phòng đã hết / không còn ở trong phòng: máy biên ngừng chuyển tiếp
+            return
+        HANDLERS[ev]("r:" + sid, m.get("d"))
+        return
+    if t == "close":
+        sid = str(m.get("sid", ""))[:64]
+        REMOTE_OPEN.discard(sid)
+        if m.get("drop"):
+            with LOCK:
+                drop("r:" + sid)
+                TOK.pop("r:" + sid, None); CHAT_LAST.pop("r:" + sid, None)
+        else:
+            do_disc("r:" + sid)
+        return
+    # ---- máy biên: nhận phản hồi từ máy nhà ----
+    if t == "to":
+        sid, ev = str(m.get("sid", "")), m.get("ev")
+        if sid in BOUND and isinstance(ev, str):
+            try:
+                sio.emit(ev, m.get("d"), to=sid)
+            except Exception:
+                pass
+            if ev in ("left", "kicked"):
+                BOUND.pop(sid, None)
+        return
+    if t == "mc":
+        ev, d = m.get("ev"), m.get("d")
+        if isinstance(ev, str):
+            for sid in m.get("sids") or []:
+                if sid in BOUND:
+                    try:
+                        sio.emit(ev, d, to=sid)
+                    except Exception:
+                        pass
+        return
+    if t == "unbind":
+        BOUND.pop(str(m.get("sid", "")), None)
+
+
+def _peer_ip():
+    ra = request.remote_addr or ""
+    if ra in ("127.0.0.1", "::1"):   # đi qua cloudflared: IP thật nằm trong header
+        return (request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or ra)
+    return ra
+
+
+if FED and Sock is not None:
+    _sock = Sock(app)
+
+    @_sock.route(LINK_PATH)
+    def _link_route(ws):
+        try:
+            peer = link_accept(ws, _peer_ip())
+        except Exception as e:
+            print("[!] Link: lỗi bắt tay:", e)
+            return
+        if peer:
+            link_session(ws, peer)
+
+
+def link_client_loop():
+    delay = 1.0
+    ctx = ssl.create_default_context() if LINK_PEER_URL.lower().startswith("wss") else None
+    while True:
+        ws = None
+        try:
+            ws = simple_websocket.Client.connect(LINK_PEER_URL, headers={"User-Agent": "cuopco-link"}, ssl_context=ctx)
+            peer = link_connect(ws)
+            delay = 1.0
+            link_session(ws, peer)
+        except Exception as e:
+            print(f"[!] Link: chưa nối được {LINK_PEER_URL}: {e}")
+        finally:
+            if ws is not None:
+                _close_quiet(ws)
+        time.sleep(delay * (0.8 + 0.4 * random.random()))
+        delay = min(delay * 2, LINK_RECONNECT_MAX_S)
+
+
+def start_link():
+    if not FED:
+        if NODE_ID or LINK_SECRET or LINK_PEER_URL:
+            print("[!] Liên kết 2 server đang TẮT: cần đặt cả NODE_ID và LINK_SECRET.")
+        return
+    if Sock is None or simple_websocket is None:
+        print("[!] Liên kết 2 server cần flask-sock và simple-websocket: pip install -r requirements.txt")
+        return
+    mode = f"gọi ra {LINK_PEER_URL}" if LINK_PEER_URL else f"chờ máy kia gọi vào {LINK_PATH}"
+    print(f"[*] Liên kết 2 server: BẬT, NODE_ID={NODE_ID}, {mode}, phòng mới: {LINK_ROOM_POLICY}")
+    if LINK_PEER_URL:
+        threading.Thread(target=link_client_loop, daemon=True).start()
 
 
 # ---------- bot (chế độ PvE) ----------
@@ -1597,10 +2109,7 @@ def pickup_step(r):
 
 
 def _emit_safe(ev, data, sid):
-    try:
-        sio.emit(ev, data, to=sid)
-    except Exception:
-        pass  # một client lỗi/đã đóng không được làm hỏng cả trận
+    E(sid, ev, data)  # một client lỗi/đã đóng không được làm hỏng cả trận (E đã bắt lỗi)
 
 
 def send_state(r):
@@ -1625,8 +2134,7 @@ def send_state(r):
               "mo": [mon_pack(mo) for mo in r.mons if mo["alive"]],
               "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs],
               "ps": [[q.pid, q.score, q.kills, q.deaths] for q in list(r.players.values())]}
-        for p in team:
-            _emit_safe("st", st, p.sid)
+        emit_many("st", st, [p.sid for p in team], True)
     if r.specs:
         everyone = list(r.players.values())
         full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1,
@@ -1639,8 +2147,7 @@ def send_state(r):
                 "mo": [mon_pack(mo) for mo in r.mons if mo["alive"]],
                 "ob": [[round(o["x"]), round(o["y"]), o["k"]] for o in r.orbs],
               "ps": [[q.pid, q.score, q.kills, q.deaths] for q in list(r.players.values())]}
-        for p in list(r.specs.values()):
-            _emit_safe("st", full, p.sid)
+        emit_many("st", full, [p.sid for p in list(r.specs.values())], True)
 
 
 def roster(r):
@@ -1701,8 +2208,8 @@ def play_round(r, i):
             p.up = r.up[p.team] if p.team in (0, 1) else 0
             p.reset(); spawn(r, p)
         make_mons(r)
-        sio.emit("rd", {"i": i, "n": r.rounds, "q": {"question": q["question"], "options": q["options"]},
-                        "players": roster(r), "map": MAPINFO, "up": list(r.up)}, to=r.code)
+        room_emit(r, "rd", {"i": i, "n": r.rounds, "q": {"question": q["question"], "options": q["options"]},
+                            "players": roster(r), "map": MAPINFO, "up": list(r.up)})
     if not wait(r, READ_S, False, "read"):
         return False
     if not wait(r, PLAY_S, True, "play"):
@@ -1721,7 +2228,7 @@ def play_round(r, i):
         res = {"ok": q["ok"], "explanation": q["explanation"], "planted": planted, "delta": delta, "tot": r.total, "last": i == r.rounds - 1,
                "up": list(r.up), "upg": upg, "upmax": UP_MAX}
         r.bullets = []; r.rockets = []
-    sio.emit("res", res, to=r.code)
+    room_emit(r, "res", res)
     return wait(r, RESULT_S, False, "result")
 
 
@@ -1739,7 +2246,7 @@ def finish_match(r):
         for p in list(r.players.values()):
             p.up = 0; p.reset(); p.auto = False; p.act = time.time()
     if not r.dead:
-        sio.emit("end", {"tot": r.total, "aborted": r.abort, "stats": stats}, to=r.code)
+        room_emit(r, "end", {"tot": r.total, "aborted": r.abort, "stats": stats})
         r.abort = False
         with LOCK:
             push(r)
@@ -1789,7 +2296,7 @@ def _run_match(r):
             fill_bots(r)
         for q in r.players.values():
             q.score = q.kills = q.deaths = 0; q.up = 0
-        sio.emit("room", info(r), to=r.code)
+        room_emit(r, "room", info(r))
     for i in range(r.rounds):
         if not play_round(r, i):
             break
@@ -2080,6 +2587,7 @@ def startup_worker():
     load_questions()
     sio.start_background_task(janitor)
     sio.start_background_task(mm_loop)
+    start_link()
     print(f"[*] Phiên bản game: {VERSION_NAME} (version {VERSION}) - chỉ client cùng version được kết nối")
     print(f"[*] Bản đồ {TW}x{TH} ô, {HZ} lần/giây. CORS: {ORIGINS if ORIGINS == '*' else ', '.join(ORIGINS)}")
     print(f"[*] Mở http://{'127.0.0.1' if HOST in ('0.0.0.0', '::') else HOST}:{PORT}/")
