@@ -107,7 +107,7 @@ SWORD_R, SWORD_COOL, SWORD_T = 58.0, 0.55, 0.25  # tầm / hồi chiêu / thời
 SWORD_DMG = 2                  # kiếm: 2 sát thương / nhát (súng bóng nước: 1 / viên)
 SHIELD_ARC, SHIELD_K = 1.15, 0.6  # khiên đỡ được trong ±1.15 rad (~66°) phía trước; đi chậm còn 60% khi giơ khiên
 PLANT_S, STEAL_S, SEE_R = 2.0, 2.5, 170.0
-UNPLANT_S = env_num("UNPLANT_SECONDS", 2.0)   # giữ G cạnh cờ nhà đã cắm chừng này giây thì nhổ được cờ lên
+UNPLANT_S = env_num("UNPLANT_SECONDS", 2.0)   # giữ F cạnh cờ nhà đã cắm chừng này giây thì nhổ được cờ lên
 UNPLANT_MAX = env_num("UNPLANT_MAX", 2)       # số lần nhổ cờ tối đa của mỗi đội trong một round
 UNPLANT_R = 70.0                              # phải đứng trong bán kính này quanh cờ để bắt đầu / tiếp tục nhổ
 
@@ -926,7 +926,11 @@ def bot_ai(r, p):
         stop = BASE_R * 0.4
     dx = dy = 0.0
     if d > stop:
-        dx, dy = (dest[0] - p.x) / d, (dest[1] - p.y) / d
+        sx, sy = nav_steer(ai, p.x, p.y, dest[0], dest[1], time.time())  # A*: đi vòng tường thay vì húc thẳng
+        sd = math.hypot(sx - p.x, sy - p.y) or 1.0
+        dx, dy = (sx - p.x) / sd, (sy - p.y) / sd
+    else:
+        ai["path"] = None
     if dx or dy:  # né quái trung lập (Golem/slime/dơi/thần giữ cờ) thay vì đâm thẳng vào rồi chết giữa đường
         ax = ay = 0.0
         for mo in r.mons:
@@ -957,7 +961,7 @@ def bot_ai(r, p):
     ai["stuck_t"] += DT
     if ai["stuck_t"] >= 0.6:
         if (dx or dy) and math.hypot(p.x - ai["lx"], p.y - ai["ly"]) < 20:
-            s = random.choice((-1, 1)); ai["det"] = 0.8; ai["dd"] = (-dy * s, dx * s)
+            s = random.choice((-1, 1)); ai["det"] = 0.8; ai["dd"] = (-dy * s, dx * s); ai["repath"] = True  # kẹt: đi lệch một chút và tính lại đường
         ai["lx"], ai["ly"], ai["stuck_t"] = p.x, p.y, 0.0
     if ai["det"] > 0:
         ai["det"] -= DT; dx, dy = ai["dd"]
@@ -1395,6 +1399,166 @@ def knock_mon(mo, sx, sy):
     mo["stun"] = KB_STUN[mo["t"]]; mo["cd"] = max(mo["cd"], 0.8)
     if mo["t"] == 3:
         mo["ch"] = 0.0; mo["lcd"] = max(mo["lcd"], 1.2)
+
+
+# ---------- tìm đường cho bot (A* trên lưới ô, né tường) ----------
+NAV_G = 8                      # ô mịn 8px: dùng để kiểm tra "đi thẳng được không" (đã nở thêm theo bán kính nhân vật)
+NAV_C = 16                     # ô thô 16px (= 2x2 ô mịn): dùng cho A*
+NAV_PAD = PR + 3               # nở tường thêm PR + 3px để bot không cạ góc tường
+NAV_REPLAN = 0.8               # giây: tối thiểu giữa hai lần tính lại đường khi đích đứng yên
+NAV_BUDGET = 1                 # số lần chạy A* tối đa mỗi tick (20Hz) trên toàn máy chủ, tránh giật khi nhiều bot cùng tính
+_NAV = {}
+_NAV_TICK = [0, 0]
+
+
+def _nav_build():
+    gw, gh = int(W // NAV_G), int(H // NAV_G)
+    fb = bytearray(gw * gh)
+    for j in range(gh):
+        cy = (j + 0.5) * NAV_G
+        for i in range(gw):
+            cx = (i + 0.5) * NAV_G
+            if cx < NAV_PAD or cy < NAV_PAD or cx > W - NAV_PAD or cy > H - NAV_PAD:
+                fb[j * gw + i] = 1
+    for wx, wy, ww, wh in WALLS:
+        i0, i1 = max(0, int((wx - NAV_PAD) // NAV_G)), min(gw - 1, int((wx + ww + NAV_PAD) // NAV_G))
+        j0, j1 = max(0, int((wy - NAV_PAD) // NAV_G)), min(gh - 1, int((wy + wh + NAV_PAD) // NAV_G))
+        for j in range(j0, j1 + 1):
+            cy = (j + 0.5) * NAV_G; ny = min(max(cy, wy), wy + wh)
+            for i in range(i0, i1 + 1):
+                cx = (i + 0.5) * NAV_G; nx = min(max(cx, wx), wx + ww)
+                if (cx - nx) ** 2 + (cy - ny) ** 2 < NAV_PAD * NAV_PAD:
+                    fb[j * gw + i] = 1
+    k = NAV_C // NAV_G
+    cw, ch = gw // k, gh // k
+    cb = bytearray(cw * ch)
+    for j in range(ch):
+        for i in range(cw):
+            if any(fb[(j * k + b) * gw + i * k + a] for b in range(k) for a in range(k)):
+                cb[j * cw + i] = 1
+    _NAV.update(gw=gw, gh=gh, fb=fb, cw=cw, ch=ch, cb=cb)
+
+
+_nav_build()  # dựng lưới đường đi một lần lúc khởi động (~50ms) để không giật ở tick đầu tiên
+
+
+def nav_los(x1, y1, x2, y2):
+    """Đi thẳng từ (x1,y1) tới (x2,y2) mà không chạm tường (đã tính bán kính nhân vật)."""
+    if not _NAV:
+        _nav_build()
+    fb, gw, gh = _NAV["fb"], _NAV["gw"], _NAV["gh"]
+    n = max(1, int(math.hypot(x2 - x1, y2 - y1) // (NAV_G * 0.75)))
+    for i in range(n + 1):
+        x = x1 + (x2 - x1) * i / n; y = y1 + (y2 - y1) * i / n
+        gi, gj = int(x // NAV_G), int(y // NAV_G)
+        if gi < 0 or gj < 0 or gi >= gw or gj >= gh or fb[gj * gw + gi]:
+            return False
+    return True
+
+
+def _nav_free_cell(cx, cy):
+    """Ô thô trống gần (cx,cy) nhất (dò theo vòng) - dùng khi điểm đầu/đích nằm sát hoặc trong tường."""
+    cw, ch, cb = _NAV["cw"], _NAV["ch"], _NAV["cb"]
+    cx, cy = min(max(cx, 0), cw - 1), min(max(cy, 0), ch - 1)
+    if not cb[cy * cw + cx]:
+        return cx, cy
+    for R in range(1, 40):
+        best = None
+        for j in range(max(0, cy - R), min(ch - 1, cy + R) + 1):
+            for i in range(max(0, cx - R), min(cw - 1, cx + R) + 1):
+                if max(abs(i - cx), abs(j - cy)) == R and not cb[j * cw + i]:
+                    d = (i - cx) ** 2 + (j - cy) ** 2
+                    if best is None or d < best[0]:
+                        best = (d, i, j)
+        if best:
+            return best[1], best[2]
+    return None
+
+
+def nav_path(x1, y1, x2, y2):
+    """A* 8 hướng trên lưới thô, không cắt góc tường. Trả về danh sách điểm (đã rút gọn bằng kiểm tra đường thẳng) hoặc None."""
+    if not _NAV:
+        _nav_build()
+    import heapq
+    cw, ch, cb = _NAV["cw"], _NAV["ch"], _NAV["cb"]
+    s = _nav_free_cell(int(x1 // NAV_C), int(y1 // NAV_C))
+    g = _nav_free_cell(int(x2 // NAV_C), int(y2 // NAV_C))
+    if not s or not g:
+        return None
+    si, gi = s[1] * cw + s[0], g[1] * cw + g[0]
+    gx, gy = g
+    DIAG = 1.4142135
+    best = {si: 0.0}
+    came = {}
+    heap = [(0.0, si)]
+    done = set()
+    found = False
+    while heap:
+        _, cur = heapq.heappop(heap)
+        if cur in done:
+            continue
+        if cur == gi:
+            found = True
+            break
+        done.add(cur)
+        cx, cy = cur % cw, cur // cw
+        gc = best[cur]
+        for ox, oy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)):
+            nx, ny = cx + ox, cy + oy
+            if nx < 0 or ny < 0 or nx >= cw or ny >= ch or cb[ny * cw + nx]:
+                continue
+            if ox and oy and (cb[cy * cw + nx] or cb[ny * cw + cx]):
+                continue
+            ni = ny * cw + nx
+            ng = gc + (DIAG if ox and oy else 1.0)
+            if ng < best.get(ni, 1e18):
+                best[ni] = ng; came[ni] = cur
+                dx, dy = abs(nx - gx), abs(ny - gy)
+                heapq.heappush(heap, (ng + 1.25 * ((dx + dy) + (DIAG - 2.0) * min(dx, dy)), ni))  # heuristic nhân 1.25: nhanh hơn nhiều, đường dài hơn tối ưu rất ít
+    if not found:
+        return None
+    pts = [(x2, y2)]
+    cur = gi
+    while cur != si:
+        pts.append(((cur % cw + 0.5) * NAV_C, (cur // cw + 0.5) * NAV_C))
+        cur = came[cur]
+    pts.append(((si % cw + 0.5) * NAV_C, (si // cw + 0.5) * NAV_C))
+    pts.reverse()  # [ô xuất phát, ..., ô đích, (x2,y2)]
+    pts[-1] = (x2, y2) if nav_los(pts[-2][0], pts[-2][1], x2, y2) else pts[-2]
+    out, i = [], 0  # rút gọn: từ mỗi điểm, nhảy tới điểm xa nhất còn đi thẳng tới được
+    while i < len(pts) - 1:
+        j = len(pts) - 1
+        while j > i + 1 and not nav_los(pts[i][0], pts[i][1], pts[j][0], pts[j][1]):
+            j -= 1
+        out.append(pts[j]); i = j
+    return out
+
+
+def nav_steer(ai, x, y, tx, ty, now):
+    """Điểm bot nên hướng tới ngay lúc này: thẳng tới đích nếu đường thông, ngược lại bám theo đường A* (tính lại khi đích dời / bị kẹt)."""
+    if nav_los(x, y, tx, ty):
+        ai["path"] = None
+        return tx, ty
+    path = ai.get("path")
+    goal = ai.get("pgoal")
+    stale = (path is None or goal is None or math.hypot(goal[0] - tx, goal[1] - ty) > 90 or
+             (now - ai.get("pt", 0.0) > NAV_REPLAN and not path) or now - ai.get("pt", 0.0) > 2.5 or ai.pop("repath", False))
+    if stale and now - ai.get("pt", 0.0) > 0.25:
+        tick = int(now * HZ)
+        if _NAV_TICK[0] != tick:
+            _NAV_TICK[0], _NAV_TICK[1] = tick, 0
+        if _NAV_TICK[1] < NAV_BUDGET:
+            _NAV_TICK[1] += 1
+            path = nav_path(x, y, tx, ty)
+            ai["path"], ai["pgoal"], ai["pt"], ai["pi"] = path, (tx, ty), now + (0.0 if path else 0.75), 0  # không ra đường thì chờ lâu hơn rồi mới thử lại
+    path = ai.get("path")
+    if not path:
+        return tx, ty  # không tìm được đường (hoặc chưa tới lượt tính): đi thẳng, đã có cơ chế chống kẹt dự phòng
+    i = ai.get("pi", 0)
+    while i < len(path) - 1 and (math.hypot(path[i][0] - x, path[i][1] - y) < 14 or nav_los(x, y, path[i + 1][0], path[i + 1][1])):
+        i += 1
+    ai["pi"] = i
+    return path[i]
 
 
 def step(r, live):
