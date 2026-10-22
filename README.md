@@ -67,6 +67,7 @@ Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần gi
 2. Mỗi cờ ứng với một đáp án. **Trong lúc chơi không ai biết cờ nào đúng.**
 3. Nhặt cờ, vác về căn cứ và đứng yên cho thanh tiến trình đầy để cắm. Khi cắm xong, đội đó thấy thông báo **"HÃY BẢO VỆ LÁ CỜ!"**.
    - **Mỗi đội chỉ được mang về 1 lá cờ:** đội đã cắm cờ, hoặc đang có đồng đội vác cờ, thì không nhặt thêm cờ khác được.
+   - **Nhổ cờ nhà:** cắm nhầm thì đứng cạnh lá cờ nhà đã cắm rồi bấm `G` (điện thoại: nút ⛏️ hiện ở chỗ nút thả cờ khi đứng gần cờ) và đứng yên khoảng 2 giây (`UNPLANT_SECONDS`) để nhổ lên. Cờ về vị trí gốc, đội đó không nhặt lại đúng lá ấy trong round này nên phải săn lá cờ khác. Mỗi đội nhổ tối đa 2 lần/round (`UNPLANT_MAX`). Bot không tự nhổ cờ.
    - Cờ đã cắm ở căn cứ đối phương vẫn cướp được bằng cách đứng cạnh cờ cho thanh tiến trình đầy (khoảng 2.5 giây), nhưng phải vượt qua hiệp sĩ canh ở đó. Bị cướp mất cờ thì đội đó được nhặt cờ khác.
 4. Hết giờ, đội giữ cờ ở căn cứ: đáp án đúng **+100**, sai **−50**.
 5. Bản đồ có 2 căn cứ ở 2 góc, 3 đường, sông chéo (đi chậm), rừng và bụi cỏ (núp, địch không thấy).
@@ -87,8 +88,8 @@ Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần gi
 
 **Điều khiển**
 
-- Máy tính: `W A S D` hoặc phím mũi tên để di chuyển, chuột để ngắm, `Space` hoặc bấm chuột trái để tấn công, phím **`1`** súng bong bóng, **`2`** kiếm gỗ, **`3`** súng tên lửa (`E` / `Q` đổi vũ khí lần lượt), **giữ chuột phải hoặc `Shift` để giơ khiên** (khi cầm kiếm), `F` để thả cờ, `P` hoặc `Esc` để tạm dừng, `M` để tắt/bật âm thanh, bấm thanh điểm để xem thống kê (`Esc` để đóng).
-- Điện thoại: cần trái để di chuyển, cần phải để ngắm và tự bắn, nút **1** 🔫 / **2** 🗡️ / **3** 🚀 (hiện số đạn) để chọn vũ khí, nút 🛡️ (kéo/giữ) để giơ khiên, nút 🏳️ (chỉ hiện khi đang vác cờ) để thả cờ. Nên xoay ngang màn hình. Vị trí các nút có thể kéo chỉnh trong game.
+- Máy tính: `W A S D` hoặc phím mũi tên để di chuyển, chuột để ngắm, `Space` hoặc bấm chuột trái để tấn công, phím **`1`** súng bong bóng, **`2`** kiếm gỗ, **`3`** súng tên lửa (`E` / `Q` đổi vũ khí lần lượt), **giữ chuột phải hoặc `Shift` để giơ khiên** (khi cầm kiếm), `G` để thả cờ / nhổ cờ nhà (khi đứng cạnh cờ đã cắm), `P` hoặc `Esc` để tạm dừng, `M` để tắt/bật âm thanh, bấm thanh điểm để xem thống kê (`Esc` để đóng).
+- Điện thoại: cần trái để di chuyển, cần phải để ngắm và tự bắn, nút **1** 🔫 / **2** 🗡️ / **3** 🚀 (hiện số đạn) để chọn vũ khí, nút 🛡️ (kéo/giữ) để giơ khiên, nút 🏳️ để thả cờ (khi vác cờ) và đổi thành ⛏️ để nhổ cờ khi đứng gần lá cờ nhà đã cắm. Nên xoay ngang màn hình. Vị trí các nút có thể kéo chỉnh trong game.
 - Chủ phòng 👑 là người duy nhất bấm Bắt đầu và Tạm dừng.
 
 ## Cài đặt
@@ -149,6 +150,8 @@ cp .env.example .env
 | `POINTS_KILL` | `20` | Điểm cho đội khi hạ một đối thủ |
 | `HEART_RESPAWN` | `20` | Giây để tim trên bản đồ hiện lại sau khi bị nhặt |
 | `ROCKET_RESPAWN` | `45` | Giây để súng tên lửa hiện lại sau khi bị nhặt |
+| `UNPLANT_SECONDS` | `2` | Giây giữ yên để nhổ lá cờ nhà đã cắm |
+| `UNPLANT_MAX` | `2` | Số lần nhổ cờ tối đa của mỗi đội trong một round |
 | `UPGRADE_MAX` | `3` | Số cấp nâng cấp tối đa của một đội (tối đa 3 vì bảng sát thương có 4 mức) |
 
 Nếu bật `TUNNEL` và đặt `ALLOWED_HOSTS` khác `*`, nhớ thêm `TUNNEL_HOST` vào danh sách.

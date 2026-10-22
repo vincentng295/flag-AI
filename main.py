@@ -107,6 +107,9 @@ SWORD_R, SWORD_COOL, SWORD_T = 58.0, 0.55, 0.25  # tầm / hồi chiêu / thời
 SWORD_DMG = 2                  # kiếm: 2 sát thương / nhát (súng bóng nước: 1 / viên)
 SHIELD_ARC, SHIELD_K = 1.15, 0.6  # khiên đỡ được trong ±1.15 rad (~66°) phía trước; đi chậm còn 60% khi giơ khiên
 PLANT_S, STEAL_S, SEE_R = 2.0, 2.5, 170.0
+UNPLANT_S = env_num("UNPLANT_SECONDS", 2.0)   # giữ G cạnh cờ nhà đã cắm chừng này giây thì nhổ được cờ lên
+UNPLANT_MAX = env_num("UNPLANT_MAX", 2)       # số lần nhổ cờ tối đa của mỗi đội trong một round
+UNPLANT_R = 70.0                              # phải đứng trong bán kính này quanh cờ để bắt đầu / tiếp tục nhổ
 
 # ---------- tim hồi máu trên bản đồ, súng tên lửa, nâng cấp theo đội ----------
 HEART_SPOTS_T = [(14, 30), (30, 50), (34, 12), (66, 26), (50, 6), (46, 44)]   # 6 tim (3 cặp đối xứng tâm)
@@ -256,6 +259,7 @@ class P:
         s.lv = 1; s.exp = 0; s.mhp = HP + s.up; s.hp = s.mhp; s.rk = 0
         s.sw = 0.0; s.dx = s.dy = 0.0; s.fire = False; s.fl = False; s.sh = False; s.carry = -1; s.prog = 0.0; s.pf = -1
         s.kbt = 0.0; s.kvx = s.kvy = 0.0  # kbt: thời gian còn bị bật lùi
+        s.un = -1  # chỉ số lá cờ nhà đang nhổ (-1 = không nhổ)
 
 
 class Room:
@@ -266,7 +270,7 @@ class Room:
         s.fill = False  # phòng ghép nhanh có lấp chỗ thiếu bằng bot (cả hai đội)
         s.players = {}; s.specs = {}; s.nextpid = 1; s.state = "lobby"; s.phase = "lobby"
         s.flags = []; s.bullets = []; s.q = None; s.round = 0; s.tl = 0.0; s.ev = []
-        s.total = [0, 0]; s.up = [0, 0]; s.hearts = []; s.rkp = []; s.rockets = []; s.dead = False; s.abort = False; s.paused = False; s.beat = time.time()
+        s.unp = [0, 0]; s.total = [0, 0]; s.up = [0, 0]; s.hearts = []; s.rkp = []; s.rockets = []; s.dead = False; s.abort = False; s.paused = False; s.beat = time.time()
 
 
 def clean(v, n):
@@ -621,6 +625,13 @@ def on_drop():
             drop_flag(r, p)
             p.nopick = time.time() + 1.5
             r.ev.append(["p", round(p.x), round(p.y), p.team])
+        elif p and p.carry < 0 and p.down <= 0 and p.kbt <= 0 and p.team in (0, 1) and r.phase == "play" and not r.paused \
+                and r.unp[p.team] < UNPLANT_MAX:
+            # không vác cờ mà bấm F cạnh lá cờ nhà đã cắm: bắt đầu nhổ cờ (phải đứng yên cạnh cờ đủ UNPLANT_S giây)
+            k = next((k for k, f in enumerate(r.flags) if f["planted"] == p.team
+                      and math.hypot(p.x - f["x"], p.y - f["y"]) < UNPLANT_R), -1)
+            if k >= 0:
+                p.un = k; p.prog = 0.0; p.pf = -1
 
 
 # ---------- chat: kênh đội ("t") và kênh cả map ("a") ----------
@@ -814,7 +825,7 @@ def bot_ai(r, p):
         elif subst:  # không tự đi nhặt cờ dưới đất; chỉ cướp lá cờ ĐÁP ÁN ĐÚNG mà địch đã cắm, còn lại thì yểm trợ người khác
             cands = [f for f in r.flags if f["c"] is None and f["planted"] == 1 - p.team and f["letter"] == ok]
         else:
-            cands = [f for f in r.flags if f["c"] is None and f["planted"] != p.team and f["letter"] == ok]
+            cands = [f for f in r.flags if f["c"] is None and f["planted"] != p.team and f["letter"] == ok and f.get("ban", -1) != p.team]
         dest = None
         if carriers:  # địch đang vác cờ: đuổi theo cướp lại / hạ gục
             c = min(carriers, key=lambda q: math.hypot(q.x - p.x, q.y - p.y))
@@ -1136,7 +1147,7 @@ def defeat(r, victim, killer=None):
     """Một người bị hạ (hết máu): đóng băng, rớt cờ, ghi thống kê và thông báo. killer=None nghĩa là do quái vật/laze."""
     if victim.down > 0:
         return
-    victim.down = DOWN_S; drop_flag(r, victim)
+    victim.down = DOWN_S; drop_flag(r, victim); victim.un = -1
     r.ev.append(["d", round(victim.x), round(victim.y), victim.team])
     victim.deaths += 1
     r.ev.append(["nk", victim.pid, killer.pid if killer is not None else -1])
@@ -1373,7 +1384,7 @@ def knock_player(r, q, src):
     d = math.hypot(q.x - src.x, q.y - src.y)
     a = math.atan2(q.y - src.y, q.x - src.x) if d > 1 else src.a
     q.kbt = KB_T; q.kvx = math.cos(a) * KB_DIST / KB_T; q.kvy = math.sin(a) * KB_DIST / KB_T
-    q.sw = 0.0; q.fl = False; q.prog = 0.0; q.pf = -1; q.cool = max(q.cool, 0.2)
+    q.sw = 0.0; q.fl = False; q.prog = 0.0; q.pf = -1; q.un = -1; q.cool = max(q.cool, 0.2)
     q.ep += 1  # client bỏ vị trí tự dự đoán, theo máy chủ trong lúc bị bật lùi
 
 
@@ -1480,10 +1491,24 @@ def step(r, live):
             else:
                 p.prog = 0.0
             continue
+        if p.un >= 0:  # đang nhổ lá cờ nhà đã cắm
+            f = r.flags[p.un]
+            if f["planted"] != p.team or r.unp[p.team] >= UNPLANT_MAX or math.hypot(p.x - f["x"], p.y - f["y"]) > UNPLANT_R:
+                p.un = -1; p.prog = 0.0  # bỏ đi xa / cờ đã bị cướp: huỷ
+            else:
+                p.prog += DT / UNPLANT_S
+                if p.prog >= 1:
+                    # nhổ xong: cờ về vị trí gốc, đội này bị khoá không nhặt lại đúng lá đó trong round, phải săn lá cờ khác
+                    f["planted"] = -1; f["c"] = None; f["x"], f["y"] = f["hx"], f["hy"]; f["ban"] = p.team
+                    r.unp[p.team] += 1
+                    r.ev.append(["nf", 7, p.pid, f["letter"], -1])
+                    r.ev.append(["p", round(p.x), round(p.y), p.team])
+                    p.un = -1; p.prog = 0.0
+                continue
         tgt = -1
         has_flag = team_has_flag(r, p.team)  # đội đã có cờ (đã cắm hoặc đồng đội đang vác) thì không nhặt thêm
         for k, f in enumerate(r.flags):
-            if not has_flag and f["c"] is None and f["planted"] != p.team and time.time() >= p.nopick and math.hypot(p.x - f["x"], p.y - f["y"]) < 30:
+            if not has_flag and f["c"] is None and f["planted"] != p.team and f.get("ban", -1) != p.team and time.time() >= p.nopick and math.hypot(p.x - f["x"], p.y - f["y"]) < 30:
                 tgt = k; break
         if tgt < 0:
             p.prog = 0.0; p.pf = -1
@@ -1618,7 +1643,7 @@ def send_state(r):
               "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk] for p in vis],
               "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] if (not f["c"] or f["c"].pid in ids)
                     else [-1, -1, f["c"].pid, -1] for f in r.flags],
-              "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp,
+              "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp, "un": r.unp, "um": UNPLANT_MAX,
               "rk": [[round(k["x"]), round(k["y"]), round(k["a"], 2), k["t"], k["o"].pid] for k in r.rockets],
               "hr": [[round(h["x"]), round(h["y"]), int(h["t"] <= 0)] for h in r.hearts],
               "rp": [[round(k["x"]), round(k["y"]), int(k["t"] <= 0)] for k in r.rkp],
@@ -1632,7 +1657,7 @@ def send_state(r):
         full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1,
                 "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk] for p in everyone],
                 "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] for f in r.flags],
-                "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp,
+                "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp, "un": r.unp, "um": UNPLANT_MAX,
               "rk": [[round(k["x"]), round(k["y"]), round(k["a"], 2), k["t"], k["o"].pid] for k in r.rockets],
               "hr": [[round(h["x"]), round(h["y"]), int(h["t"] <= 0)] for h in r.hearts],
               "rp": [[round(k["x"]), round(k["y"]), int(k["t"] <= 0)] for k in r.rkp],
@@ -1696,7 +1721,9 @@ def play_round(r, i):
         r.rockets = []
         r.hearts = [{"x": a * T, "y": b * T, "t": 0.0} for a, b in HEART_SPOTS_T]
         r.rkp = [{"x": a * T, "y": b * T, "t": 0.0} for a, b in RK_SPOTS_T]
-        r.flags = [{"x": spots[k][0] * T, "y": spots[k][1] * T, "c": None, "planted": -1, "slot": 0, "letter": k} for k in range(n)]
+        r.flags = [{"x": spots[k][0] * T, "y": spots[k][1] * T, "c": None, "planted": -1, "slot": 0, "letter": k,
+                    "hx": spots[k][0] * T, "hy": spots[k][1] * T, "ban": -1} for k in range(n)]
+        r.unp = [0, 0]
         for p in r.players.values():
             p.up = r.up[p.team] if p.team in (0, 1) else 0
             p.reset(); spawn(r, p)

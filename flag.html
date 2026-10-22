@@ -127,7 +127,7 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
        <li>Trên đường đi có quái vật, thần giữ cờ và hiệp sĩ. Hãy dùng 🔫 súng bong bóng, 🗡️ kiếm kèm 🛡️ khiên, 🚀 súng tên lửa, và nhặt ❤️ để hồi máu.</li>
        <li>Hết giờ, cờ ở căn cứ đúng đáp án được <b>+100</b> điểm, sai bị <b>−50</b>. Đội nhiều điểm nhất sau các round sẽ chiến thắng!</li>
       </ol>
-      <small>💻 Máy tính: WASD di chuyển, chuột ngắm, Space tấn công, phím 1/2/3 đổi vũ khí. 📱 Điện thoại: cần trái đi, cần phải ngắm và bắn.</small>
+      <small>💻 Máy tính: WASD di chuyển, chuột ngắm, Space tấn công, phím 1/2/3 đổi vũ khí, G nhổ/thả cờ. 📱 Điện thoại: cần trái đi, cần phải ngắm và bắn.</small>
      </details>
      <p>Các em hãy chia sẻ trò chơi này cho bạn bè cùng chơi nhé. Thầy cảm ơn các em! 💚</p></div></div>
    <div class="card grow"><div class="row"><h2 style="margin:0">Danh sách phòng</h2><button class="btn pri" id="bopen">➕ Tạo phòng</button></div><div id="rooms"><small>Chưa có phòng nào.</small></div></div>
@@ -416,7 +416,7 @@ function flagIcon(x,y,i,al){ctx.globalAlpha=al;ctx.strokeStyle='#14306b';ctx.lin
  ctx.fillStyle=FC[i];ctx.beginPath();ctx.roundRect(x,y-30,26,18,4);ctx.fill();ctx.lineWidth=2;ctx.stroke();
  ctx.fillStyle='#fff';ctx.font='800 14px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(L[i],x+13,y-20);ctx.globalAlpha=1}
 function frame(t){requestAnimationFrame(frame);const dt=Math.min(.1,(t-lastT)/1000);lastT=t;if(!inGame||!M||!S||!TER)return;
- const k=1-Math.exp(-dt*20);let me=null;for(const p of S.p){const d=disp[p[0]];if(d){if(p[0]===pid){if(p[17]&&p[6]<=0){d.x+=(d.tx-d.x)*k;d.y+=(d.ty-d.y)*k;myEp=-1}else if(p[12]!==myEp||p[6]>0||S.ph!=='play'||S.pz){d.x=d.tx;d.y=d.ty;myEp=p[12]}else predict(d,dt,p[7]>=0,p[13])}else{d.x+=(d.tx-d.x)*k;d.y+=(d.ty-d.y)*k}}if(p[0]===pid){me={x:d.x,y:d.y};document.getElementById('bdr').classList.toggle('hide',p[7]<0)}}
+ const k=1-Math.exp(-dt*20);let me=null;for(const p of S.p){const d=disp[p[0]];if(d){if(p[0]===pid){if(p[17]&&p[6]<=0){d.x+=(d.tx-d.x)*k;d.y+=(d.ty-d.y)*k;myEp=-1}else if(p[12]!==myEp||p[6]>0||S.ph!=='play'||S.pz){d.x=d.tx;d.y=d.ty;myEp=p[12]}else predict(d,dt,p[7]>=0,p[13])}else{d.x+=(d.tx-d.x)*k;d.y+=(d.ty-d.y)*k}}if(p[0]===pid){me={x:d.x,y:d.y};updDropBtn()}}
  if(isSpec()&&spF){const d=disp[spF];if(d)me={x:d.x,y:d.y}}
  sc=(isSpec()&&!spF)?Math.min(cw/M.W,ch/M.H):Math.max(.3,Math.min(cw/1100,ch/700));const vw=cw/sc,vh=ch/sc;
  if(me){camx+=(me.x-camx)*Math.min(1,dt*10)||0;camy+=(me.y-camy)*Math.min(1,dt*10)||0}else if(!camx){camx=M.W/2;camy=M.H/2}
@@ -480,6 +480,8 @@ function drawChar(c,x,y,a,tm,g,w,sw,dn,sh,up){
   c.save();c.translate(24,0);c.strokeStyle=L;c.lineWidth=2.5;c.fillStyle=dn?'#9bb':col;c.beginPath();c.roundRect(-6,-20,12,40,6);c.fill();c.stroke();
   c.fillStyle='#fff';c.beginPath();c.roundRect(-2,-12,4,24,2);c.fill();c.restore()}
  c.restore()}
+function canUnplant(){if(!S||isSpec()||S.ph!=='play'||S.pz)return false;const p=S.p.find(q=>q[0]===pid),d=disp[pid],t=myTeam();if(!p||!d||p[7]>=0||p[6]>0||!S.un||(S.um||0)-(S.un[t]|0)<=0)return false;return S.f.some(f=>f[3]===t&&Math.hypot(f[0]-d.x,f[1]-d.y)<62)}
+function updDropBtn(){if(!S||isSpec())return;const p=S.p.find(q=>q[0]===pid);if(!p)return;const car=p[7]>=0,un=canUnplant(),ic=car?'🏳️':'⛏️',lb=car?'Thả cờ':'Nhổ cờ';const cd=document.getElementById('cDrop');if(cd){cd.classList.toggle('dim',!car&&!un);const a=cd.querySelector('.ci'),b=cd.querySelector('small');if(a&&a.textContent!==ic)a.textContent=ic;if(b&&b.textContent!==lb)b.textContent=lb}const bd=document.getElementById('bdr');if(bd){bd.classList.toggle('hide',!car&&!un);if(bd.textContent!==ic){bd.textContent=ic;bd.title=car?'Thả cờ (G)':'Nhổ cờ (G)'}}}
 function dropFlag(){if(sock&&S&&S.ph==='play'&&!S.pz&&!isSpec())sock.emit('drop')}
 function wallAt(x,y){for(const[wx,wy,ww,wh]of M.walls)if(x>=wx-2&&x<=wx+ww+2&&y>=wy-2&&y<=wy+wh+2)return true;return false}
 function aimLine(me){const pp=S.p.find(q=>q[0]===pid);if(!pp||pp[6]>0)return;
@@ -498,8 +500,8 @@ function setG(g){MYG=g;localStorage.setItem('g',g);for(const k of[0,1]){const b=
  c.clearRect(0,0,84,64);c.save();c.scale(1.5,1.5);drawChar(c,26,21,-.5,0,k,k?0:1,0,0);c.restore()}}
 document.getElementById('g0').onclick=()=>setG(0);document.getElementById('g1').onclick=()=>setG(1);setG(MYG);
 [['🔫','1 - Súng bong bóng'],['🗡️','2 - Kiếm gỗ'],['🚀0','3 - Súng tên lửa']].forEach((x,i)=>{const b=document.createElement('button');b.className='btn bwk';b.id='bw'+(i+1);b.textContent=x[0];b.title=x[1];b.onclick=()=>setW(i);document.getElementById('tb').appendChild(b)});
-{const b=document.createElement('button');b.className='btn hide';b.id='bdr';b.textContent='🏳️';b.title='Thả cờ (F)';b.onclick=dropFlag;document.getElementById('tb').appendChild(b)}
-addEventListener('keydown',e=>{if(e.code==='KeyE'||e.code==='KeyQ')swapW();if(e.code==='KeyF')dropFlag();
+{const b=document.createElement('button');b.className='btn hide';b.id='bdr';b.textContent='🏳️';b.title='Thả cờ (G)';b.onclick=dropFlag;document.getElementById('tb').appendChild(b)}
+addEventListener('keydown',e=>{if(e.code==='KeyE'||e.code==='KeyQ')swapW();if(e.code==='KeyG')dropFlag();
  if(inGame&&e.target.tagName!=='INPUT'){const m=/^(Digit|Numpad)([123])$/.exec(e.code);if(m)setW(+m[2]-1)}});
 </script>
 <script>
@@ -544,7 +546,7 @@ function drawExtras(dt){const t=performance.now()/1000;if(window.qPhase)qPhase(S
  for(let i=FX.length-1;i>=0;i--){const f=FX[i],a=(performance.now()-f.t)/450;if(a>=1){FX.splice(i,1);continue}ctx.globalAlpha=1-a;ctx.fillStyle='rgba(255,170,40,.5)';ctx.strokeStyle='#ff5a1f';ctx.lineWidth=4;ctx.beginPath();ctx.arc(f.x,f.y,62*(.25+.75*a),0,7);ctx.fill();ctx.stroke();ctx.globalAlpha=1}
  for(const o of S.ob||[]){ctx.font='20px sans-serif';ctx.shadowColor=o[2]?'#ff5a7a':'#ffd23f';ctx.shadowBlur=12;ctx.fillText(o[2]?'❤️':'⭐',o[0],o[1]+Math.sin(t*4+o[0])*3);ctx.shadowBlur=0}
  for(const m of S.mo||[]){const d=mdisp[m[0]]||(mdisp[m[0]]={x:m[2],y:m[3]}),k=Math.min(1,dt*14);d.x+=(m[2]-d.x)*k;d.y+=(m[3]-d.y)*k;drawMon(m,d,t)}
- const p=S.p.find(q=>q[0]===pid);if(p){const rk=p[19]|0,was=MYRK;MYRK=rk;if(rk>was&&!isSpec())setW(2);if(MYW===2&&rk<=0)setW(0);updWBtn();const cd=document.getElementById('cDrop');if(cd)cd.classList.toggle('dim',p[7]<0);const lv=p[13],need=lv*6,tx=lv>=5?`Lv ${lv} MAX`:`Lv ${lv}  ⭐ ${p[14]}/${need}`;if(lvb.firstChild.textContent!==tx)lvb.firstChild.textContent=tx;lvb.lastChild.firstChild.style.width=(lv>=5?100:p[14]/need*100)+'%'}}
+ const p=S.p.find(q=>q[0]===pid);if(p){const rk=p[19]|0,was=MYRK;MYRK=rk;if(rk>was&&!isSpec())setW(2);if(MYW===2&&rk<=0)setW(0);updWBtn();updDropBtn();const lv=p[13],need=lv*6,tx=lv>=5?`Lv ${lv} MAX`:`Lv ${lv}  ⭐ ${p[14]}/${need}`;if(lvb.firstChild.textContent!==tx)lvb.firstChild.textContent=tx;lvb.lastChild.firstChild.style.width=(lv>=5?100:p[14]/need*100)+'%'}}
 </script>
 <script>
 (function(){
@@ -693,6 +695,7 @@ function feedEv(e){
   else if(k===4)feedAdd(`🤖 ${feedNm(e[2])} đang AFK, bot chơi thay`);
   else if(k===5)feedAdd(`✅ ${feedNm(e[2])} đã quay lại, tự điều khiển tiếp`);
   else if(k===6)feedAdd(`🚪 ${feedNm(e[2])} đã rời trận, bot chơi thay`);
+  else if(k===7)feedAdd(`⛏️ ${feedNm(e[2])} đã nhổ lá cờ đáp án ${feedFl(e[3])}`);
   else feedAdd(`${feedNm(e[2])} đã thả lá cờ đáp án ${feedFl(e[3])}`)}
  else feedAdd(e[2]>=0?`${feedNm(e[1])} đã bị đánh bại bởi ${feedNm(e[2])}`:`${feedNm(e[1])} đã bị đánh bại bởi <b>quái vật</b>`)}
 </script>
