@@ -820,12 +820,12 @@ def bot_ai(r, p):
     if p.carry >= 0:
         dest, home = (bx, by), True
     else:
-        if team_has_flag(r, p.team):
+        if team_has_right(r, p.team, ok):  # đội đã cắm/đang vác cờ đúng rồi thì thôi; đang giữ cờ sai thì vẫn đi lấy cờ đúng để thay
             cands = []
         elif subst:  # không tự đi nhặt cờ dưới đất; chỉ cướp lá cờ ĐÁP ÁN ĐÚNG mà địch đã cắm, còn lại thì yểm trợ người khác
             cands = [f for f in r.flags if f["c"] is None and f["planted"] == 1 - p.team and f["letter"] == ok]
         else:
-            cands = [f for f in r.flags if f["c"] is None and f["planted"] != p.team and f["letter"] == ok and f.get("ban", -1) != p.team]
+            cands = [f for f in r.flags if f["c"] is None and f["planted"] != p.team and f["letter"] == ok]
         dest = None
         if carriers:  # địch đang vác cờ: đuổi theo cướp lại / hạ gục
             c = min(carriers, key=lambda q: math.hypot(q.x - p.x, q.y - p.y))
@@ -944,7 +944,7 @@ def bot_ai(r, p):
                 if tx * dx + ty * dy < 0:
                     tx, ty = -tx, -ty
                 ax += (mdx / md) * w * 1.2 + tx * w * 1.4; ay += (mdy / md) * w * 1.2 + ty * w * 1.4
-        if p.carry < 0 and not team_has_flag(r, p.team):
+        if p.carry < 0:  # nhặt cờ giờ là vô điều kiện nên luôn phải tránh cờ sai
             for f in r.flags:  # cờ sai (hoặc bot không biết đáp án) nằm dưới đất: đi vòng, đừng chạm vào kẻo tự nhặt
                 if f["c"] is None and f["planted"] == -1 and (subst or f["letter"] != ok):
                     mdx, mdy = p.x - f["x"], p.y - f["y"]; md = math.hypot(mdx, mdy)
@@ -1140,6 +1140,11 @@ def on_kill(r, victim, team):
         drop_orb(r, victim.x, victim.y, 0, random.randint(2, 4) + victim.lv - 1)
     if random.random() < 0.2:
         drop_orb(r, victim.x, victim.y, 1)
+
+
+def team_has_right(r, team, ok):
+    """Đội đã cắm hoặc đang vác lá cờ đáp án ĐÚNG (dùng cho bot: có cờ đúng rồi thì khỏi đi lấy thêm)."""
+    return any(f["letter"] == ok and (f["planted"] == team or (f["c"] is not None and f["c"].team == team)) for f in r.flags)
 
 
 def team_has_flag(r, team):
@@ -1645,6 +1650,10 @@ def step(r, live):
                 p.prog += DT / PLANT_S
                 if p.prog >= 1:
                     f = r.flags[p.carry]
+                    for g in r.flags:  # đội đã cắm cờ khác: cờ cũ bị thay, quay về vị trí gốc trên map (ai cũng nhặt lại được)
+                        if g is not f and g["planted"] == p.team:
+                            g["planted"] = -1; g["c"] = None; g["x"], g["y"] = g["hx"], g["hy"]
+                            r.ev.append(["nf", 8, p.pid, g["letter"], f["letter"]])
                     used = {g["slot"] for g in r.flags if g["planted"] == p.team}
                     slot = next(i for i in range(4) if i not in used)
                     f["c"] = None; f["planted"] = p.team; f["slot"] = slot
@@ -1662,17 +1671,16 @@ def step(r, live):
             else:
                 p.prog += DT / UNPLANT_S
                 if p.prog >= 1:
-                    # nhổ xong: cờ về vị trí gốc, đội này bị khoá không nhặt lại đúng lá đó trong round, phải săn lá cờ khác
-                    f["planted"] = -1; f["c"] = None; f["x"], f["y"] = f["hx"], f["hy"]; f["ban"] = p.team
+                    # nhổ xong: cờ về vị trí gốc, ai cũng nhặt lại được (kể cả đội vừa nhổ)
+                    f["planted"] = -1; f["c"] = None; f["x"], f["y"] = f["hx"], f["hy"]
                     r.unp[p.team] += 1
                     r.ev.append(["nf", 7, p.pid, f["letter"], -1])
                     r.ev.append(["p", round(p.x), round(p.y), p.team])
                     p.un = -1; p.prog = 0.0
                 continue
         tgt = -1
-        has_flag = team_has_flag(r, p.team)  # đội đã có cờ (đã cắm hoặc đồng đội đang vác) thì không nhặt thêm
         for k, f in enumerate(r.flags):
-            if not has_flag and f["c"] is None and f["planted"] != p.team and f.get("ban", -1) != p.team and time.time() >= p.nopick and math.hypot(p.x - f["x"], p.y - f["y"]) < 30:
+            if f["c"] is None and f["planted"] != p.team and time.time() >= p.nopick and math.hypot(p.x - f["x"], p.y - f["y"]) < 30:
                 tgt = k; break
         if tgt < 0:
             p.prog = 0.0; p.pf = -1
@@ -1886,7 +1894,7 @@ def play_round(r, i):
         r.hearts = [{"x": a * T, "y": b * T, "t": 0.0} for a, b in HEART_SPOTS_T]
         r.rkp = [{"x": a * T, "y": b * T, "t": 0.0} for a, b in RK_SPOTS_T]
         r.flags = [{"x": spots[k][0] * T, "y": spots[k][1] * T, "c": None, "planted": -1, "slot": 0, "letter": k,
-                    "hx": spots[k][0] * T, "hy": spots[k][1] * T, "ban": -1} for k in range(n)]
+                    "hx": spots[k][0] * T, "hy": spots[k][1] * T} for k in range(n)]
         r.unp = [0, 0]
         for p in r.players.values():
             p.up = r.up[p.team] if p.team in (0, 1) else 0

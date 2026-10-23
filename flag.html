@@ -696,6 +696,7 @@ function feedEv(e){
   else if(k===5)feedAdd(`✅ ${feedNm(e[2])} đã quay lại, tự điều khiển tiếp`);
   else if(k===6)feedAdd(`🚪 ${feedNm(e[2])} đã rời trận, bot chơi thay`);
   else if(k===7)feedAdd(`⛏️ ${feedNm(e[2])} đã nhổ lá cờ đáp án ${feedFl(e[3])}`);
+  else if(k===8)feedAdd(`🔄 ${feedNm(e[2])} đã thay lá cờ đáp án ${feedFl(e[3])} bằng lá ${feedFl(e[4])}, cờ cũ về vị trí ban đầu`);
   else feedAdd(`${feedNm(e[2])} đã thả lá cờ đáp án ${feedFl(e[3])}`)}
  else feedAdd(e[2]>=0?`${feedNm(e[1])} đã bị đánh bại bởi ${feedNm(e[2])}`:`${feedNm(e[1])} đã bị đánh bại bởi <b>quái vật</b>`)}
 </script>

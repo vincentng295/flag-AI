@@ -66,8 +66,8 @@ Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần gi
 1. Mỗi round 3 phút: 10 giây đọc đề, 170 giây tranh cờ, rồi xem kết quả.
 2. Mỗi cờ ứng với một đáp án. **Trong lúc chơi không ai biết cờ nào đúng.**
 3. Nhặt cờ, vác về căn cứ và đứng yên cho thanh tiến trình đầy để cắm. Khi cắm xong, đội đó thấy thông báo **"HÃY BẢO VỆ LÁ CỜ!"**.
-   - **Mỗi đội chỉ được mang về 1 lá cờ:** đội đã cắm cờ, hoặc đang có đồng đội vác cờ, thì không nhặt thêm cờ khác được.
-   - **Nhổ cờ nhà:** cắm nhầm thì đứng cạnh lá cờ nhà đã cắm rồi bấm `G` (điện thoại: nút ⛏️ hiện ở chỗ nút thả cờ khi đứng gần cờ) và đứng yên khoảng 2 giây (`UNPLANT_SECONDS`) để nhổ lên. Cờ về vị trí gốc, đội đó không nhặt lại đúng lá ấy trong round này nên phải săn lá cờ khác. Mỗi đội nhổ tối đa 2 lần/round (`UNPLANT_MAX`). Bot không tự nhổ cờ.
+   - **Mỗi đội chỉ có 1 lá cờ cắm ở căn cứ:** nhặt cờ là vô điều kiện (kể cả khi đội đã cắm cờ hoặc đã nhổ cờ trước đó). Mang lá cờ khác về cắm thì **lá cũ bị thay**, quay về vị trí gốc trên map và ai cũng nhặt lại được.
+   - **Nhổ cờ nhà:** cắm nhầm thì đứng cạnh lá cờ nhà đã cắm rồi bấm `G` (điện thoại: nút ⛏️ hiện ở chỗ nút thả cờ khi đứng gần cờ) và đứng yên khoảng 2 giây (`UNPLANT_SECONDS`) để nhổ lên. Cờ về vị trí gốc, ai cũng nhặt lại được (kể cả đội vừa nhổ). Mỗi đội nhổ tối đa 2 lần/round (`UNPLANT_MAX`). Bot không tự nhổ cờ.
    - Cờ đã cắm ở căn cứ đối phương vẫn cướp được bằng cách đứng cạnh cờ cho thanh tiến trình đầy (khoảng 2.5 giây), nhưng phải vượt qua hiệp sĩ canh ở đó. Bị cướp mất cờ thì đội đó được nhặt cờ khác.
 4. Hết giờ, đội giữ cờ ở căn cứ: đáp án đúng **+100**, sai **−50**.
 5. Bản đồ có 2 căn cứ ở 2 góc, 3 đường, sông chéo (đi chậm), rừng và bụi cỏ (núp, địch không thấy).
