@@ -59,7 +59,7 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 #cbar{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:8;display:flex;gap:6px;width:min(520px,92vw)}
 #cbar input{flex:1;min-width:0;font-size:16px;padding:6px 10px;border:3px solid var(--ink);border-radius:12px}#cbar .btn{padding:0 10px;height:40px}
 #autob{position:absolute;left:50%;bottom:64px;transform:translateX(-50%);z-index:7;background:#fff3b0;border:3px solid var(--ink);border-radius:14px;box-shadow:0 3px 0 var(--ink);padding:4px 14px;font-weight:800;text-align:center;pointer-events:none;max-width:80vw;font-size:clamp(13px,2.4vw,16px)}#autob small{font-weight:600}
-/* ===== Thầy HuskyDG ===== */
+/* ===== Thầy Hakuma ===== */
 .tch{display:flex;gap:10px;align-items:flex-start}
 .tch img{flex:none;width:78px;height:auto;max-height:110px;object-fit:contain;filter:drop-shadow(0 3px 0 rgba(20,48,107,.35))}
 .tch .say{flex:1;min-width:0;font-size:clamp(12px,2.1vh,14px);line-height:1.4}
@@ -116,9 +116,9 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
     <small>Tự ghép đủ người rồi vào trận ngay (3 round).</small></div>
   </section>
   <section class="gl">
-   <div class="card tch"><img src="/img/author_chibi.png" alt="Thầy HuskyDG" onerror="this.style.display='none'">
-    <div class="say"><h2 style="margin:0 0 2px">👨‍🏫 Lời thầy HuskyDG</h2>
-     <p>Xin chào các em, thầy là <b>HuskyDG</b>! 👋 Trò chơi này do chính tay thầy sáng tạo, để những câu hỏi bài học trở thành một cuộc tranh tài vui nhộn: vừa học, vừa chơi, vừa kết bạn cùng nhau.</p>
+   <div class="card tch"><img src="/img/author_chibi.png" alt="Thầy Hakuma" onerror="this.style.display='none'">
+    <div class="say"><h2 style="margin:0 0 2px">👨‍🏫 Lời thầy Hakuma</h2>
+     <p>Xin chào các em, thầy là <b>Hakuma</b>! 👋 Trò chơi này do chính tay thầy sáng tạo, để những câu hỏi bài học trở thành một cuộc tranh tài vui nhộn: vừa học, vừa chơi, vừa kết bạn cùng nhau.</p>
      <details><summary>📖 Thầy hướng dẫn cách chơi</summary>
       <ol>
        <li>Lớp chia thành hai đội <b>Xanh</b> và <b>Đỏ</b>. Mỗi round thầy ra một câu hỏi, trên bản đồ có các lá cờ <b>A, B, C, D</b>, mỗi lá là một đáp án.</li>
@@ -280,7 +280,7 @@ function start(V){
   if(d.aborted)h+='<h2>Trận bị dừng (thiếu người)</h2>';
   else{
    const msg=dr?'🤝 Hoà nhau! Cả hai đội đều chơi rất xuất sắc!':isSpec()?`🎉 Chúc mừng đội ${TN[wt]} đã chiến thắng!`:win?`🎉 Chúc mừng! Đội ${TN[wt]} của bạn đã chiến thắng! 🏆`:`Đội ${TN[wt]} thắng! Cảm ơn bạn đã chơi, trận sau cố lên nhé! 💪`;
-   h+=`<div class="row tch verdict"><img src="/img/author_chibi.png" alt="Thầy HuskyDG" onerror="this.style.display='none'"><div class="say"><small>👨‍🏫 Thầy xin tuyên bố kết quả:</small><div class="big">${msg}</div></div></div>`;
+   h+=`<div class="row tch verdict"><img src="/img/author_chibi.png" alt="Thầy Hakuma" onerror="this.style.display='none'"><div class="say"><small>👨‍🏫 Thầy xin tuyên bố kết quả:</small><div class="big">${msg}</div></div></div>`;
    const best=st.slice().sort((a,b)=>b.s-a.s||b.k-a.k||a.d-b.d)[0];
    if(best)h+=`<div class="mvp">🌟 Xuất sắc nhất: <b style="color:${TC[best.team]}">${esc(best.nick)}</b> · ${best.s} điểm · ${best.k} kill</div>`}
   h+=`<div class="row" style="justify-content:center;gap:24px"><b style="color:${TC[0]}">🔵 ${d.tot[0]}</b><b style="color:${TC[1]}">🔴 ${d.tot[1]}</b></div>`;
