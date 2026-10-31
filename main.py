@@ -136,7 +136,7 @@ def clamp_g(v):
         return 0
     return v if 0 <= v < NCH else 0
 LASER_RANGE = 480.0                      # tầm ngắm/bắn của thần giữ cờ
-GUARD_R, GUARD_SP = 22, 120.0            # bán kính, tốc độ thần giữ cờ (chậm hơn người chơi 200)
+GUARD_R, GUARD_SP = 22, 200.0            # bán kính, tốc độ thần giữ cờ (chậm hơn người chơi 200)
 BSPEED, COOL = 600.0, 0.32
 # Tầm bong bóng hiệu dụng lên thần giữ cờ = đạn bay + điểm xuất phát (PR+3) + bán kính trúng (GUARD_R+3)
 # -> chọn BLIFE sao cho tầm đó đúng bằng LASER_RANGE: người chơi không thể bắn trúng thần từ ngoài tầm laze.
@@ -1451,12 +1451,13 @@ def make_mons(r):
                 x, y = random.uniform(0.1, 0.9) * W, random.uniform(0.1, 0.9) * H
                 if free(x, y, 14) and free(W - x, H - y, 14):
                     add(5, x, y); add(5, W - x, H - y); break
-    for f in r.flags:  # mỗi lá cờ có một thần giữ cờ đứng cạnh
+    for fi, f in enumerate(r.flags):  # mỗi lá cờ có một thần giữ cờ đứng cạnh
         for _ in range(40):
             a = random.uniform(0, 6.283); x, y = f["x"] + math.cos(a) * 85, f["y"] + math.sin(a) * 85
             if not hit_wall(x, y, 28):
                 add(3, x, y)
                 r.mons[-1]["ax"], r.mons[-1]["ay"] = f["x"], f["y"]  # mốc đi dạo = vị trí lá cờ
+                r.mons[-1]["fi"] = fi  # chỉ số lá cờ thần này canh
                 break
     for team in (0, 1):  # hiệp sĩ canh căn cứ: xếp đều quanh căn cứ, góc xuất phát ngẫu nhiên
         bx, by = BASES[team]; a0 = random.uniform(0, 6.283)
@@ -1611,6 +1612,7 @@ def hit_mon(r, mo, team, by=None, dmg=1):
 
 
 LASER_CHARGE, LASER_CD, LASER_DMG = 0.9, 2.6, 2
+GUARD_FOLLOW_D = 110.0  # thần giữ cờ bám theo người đang vác lá cờ của nó, giữ khoảng cách này (vẫn bắn laze)
 GUARD_WANDER, GUARD_LOSE, GUARD_LEASH = 120.0, 560.0, 650.0  # bán kính đi dạo / khoảng cách "chạy thoát" / dây xích tối đa quanh cờ
 
 
@@ -1660,6 +1662,11 @@ def mon_move(mo, tx, ty, sp, stop=4.0):
 def guard_step(r, mo, c):
     """Thần giữ cờ: bị bắn/chém thì đuổi người đó tới khi họ thoát (xa > GUARD_LOSE, ngã, hoặc kéo quá xa cờ);
     bình thường thì đi dạo ngẫu nhiên quanh lá cờ. Đứng yên khi đang nạp laze. Trả về (người gần nhất, khoảng cách) để đánh cận chiến."""
+    fi = mo.get("fi", -1)  # lá cờ mà thần này canh: có người vác thì bám theo cho tới khi họ về tới sân đội mình
+    car = r.flags[fi]["c"] if 0 <= fi < len(r.flags) else None
+    fol = car is not None and car.down <= 0 and math.hypot(car.x - BASES[car.team][0], car.y - BASES[car.team][1]) >= BASE_R
+    if fol:
+        mo["ag"] = None
     tg = mo["ag"]
     if tg is not None:
         if (tg not in r.players.values() or tg.down > 0
@@ -1667,7 +1674,9 @@ def guard_step(r, mo, c):
                 or math.hypot(tg.x - mo["ax"], tg.y - mo["ay"]) > GUARD_LEASH):
             mo["ag"] = tg = None  # người chơi đã thoát -> quay về đi dạo
     if mo["ch"] <= 0:  # đang nạp laze thì đứng yên để ngắm
-        if tg is not None:
+        if fol:
+            mon_move(mo, car.x, car.y, c["sp"], stop=GUARD_FOLLOW_D)
+        elif tg is not None:
             mon_move(mo, tg.x, tg.y, c["sp"], stop=PR + mo["r"] - 2)
         elif math.hypot(mo["ax"] - mo["x"], mo["ay"] - mo["y"]) > GUARD_WANDER * 1.5:
             mon_move(mo, mo["ax"], mo["ay"], c["sp"] * 0.8)  # đi quá xa cờ (sau khi đuổi) -> về lại
