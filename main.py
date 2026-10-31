@@ -93,6 +93,7 @@ MAXLV = 5
 REJOIN_S = env_num("REJOIN_SECONDS", 90)  # giữ chỗ cho người chơi mất kết nối giữa trận (giây); 0 = tắt
 AFK_S = env_num("AFK_SECONDS", 60)  # đứng yên, không bấm gì quá chừng này giây giữa round thì bot chơi thay tạm thời (bấm lại là lấy lại quyền); 0 = tắt
 MAX_SPECS = env_num("MAX_SPECTATORS", 30)
+HOST_KEEP_S = env_num("HOST_KEEP_SECONDS", 120)  # chủ phòng đóng trang ở phòng chờ: giữ ghế chủ phòng chừng này giây để vào lại; 0 = tắt
 MM_WAIT_S = env_num("MATCH_FILL_SECONDS", 60)  # ghép trận tự động: chờ quá chừng này giây thì lấp chỗ thiếu bằng bot; 0 = tắt
 T = 32; TW, TH = 80, 56; W, H = TW * T, TH * T     # bản đồ 80x56 ô
 PR = 14; HZ = 20; DT = 1.0 / HZ
@@ -292,6 +293,11 @@ class Room:
         s.pve = pve  # PvE: đội Đỏ (1) là bot do máy điều khiển
         s.eve = eve and not pve  # EvE (demo): cả hai đội đều là bot, mọi người trong phòng (kể cả chủ phòng) chỉ xem
         s.fill = False  # phòng ghép nhanh có lấp chỗ thiếu bằng bot (cả hai đội)
+        s.locked = False  # khóa phòng: không ai vào được nữa (người đang ở trong / đang chờ vào lại vẫn giữ chỗ)
+        s.tlock = False  # khóa đội: người chơi thường không tự đổi đội được (chủ phòng vẫn đổi/chuyển được)
+        s.rnd = False  # chia ngẫu nhiên người chơi vào hai đội mỗi khi chủ phòng bấm Bắt đầu
+        s.late = False  # cho người mới vào chơi khi trận đã bắt đầu (nhận chỗ trống hoặc nhân vật do bot đang giữ hộ)
+        s.banned = set()  # token trình duyệt của người đã bị kick
         s.players = {}; s.specs = {}; s.nextpid = 1; s.state = "lobby"; s.phase = "lobby"
         s.flags = []; s.bullets = []; s.q = None; s.round = 0; s.tl = 0.0; s.ev = []
         s.unp = [0, 0]; s.total = [0, 0]; s.up = [0, 0]; s.hearts = []; s.rkp = []; s.rockets = []; s.dead = False; s.abort = False; s.paused = False; s.beat = time.time()
@@ -323,8 +329,9 @@ def info(r):
     return {"code": r.code, "name": r.name, "size": r.size, "rounds": r.rounds, "pw": bool(r.pw), "state": r.state,
             "pve": r.pve, "eve": r.eve, "max": cap(r), "n": sum(1 for q in r.players.values() if not q.bot), "ns": len(r.specs),
             "host": (r.players.get(r.host) or r.specs.get(r.host) or P(0, "", 0)).pid,
-            "teams": [[{"pid": p.pid, "nick": p.nick} for p in r.players.values() if p.team == t and not p.bot] for t in (0, 1)],
-            "specs": [{"pid": p.pid, "nick": p.nick} for p in r.specs.values()]}
+            "locked": r.locked, "tlock": r.tlock, "rnd": r.rnd, "late": r.late,
+            "teams": [[{"pid": p.pid, "nick": p.nick, "aw": int(p.away)} for p in r.players.values() if p.team == t and not p.bot] for t in (0, 1)],
+            "specs": [{"pid": p.pid, "nick": p.nick, "aw": int(p.away)} for p in r.specs.values()]}
 
 
 def rooms_list():
@@ -336,13 +343,20 @@ def push(r):
     sio.emit("rooms", rooms_list())
 
 
-def add_player(r, sid, nick, spec=False):
+def add_player(r, sid, nick, spec=False, team=None):
     p = P(sid, nick, r.nextpid); r.nextpid += 1
     if spec or r.eve:  # phòng EvE: ai vào cũng là khán giả
         p.team = -1; r.specs[sid] = p
     else:
         c = [sum(1 for q in r.players.values() if q.team == t) for t in (0, 1)]
-        p.team = 0 if (r.pve or c[0] <= c[1]) else 1
+        if team is not None:
+            p.team = team
+        elif r.pve:
+            p.team = 0
+        elif c[0] == c[1]:
+            p.team = random.randint(0, 1) if r.rnd else 0
+        else:
+            p.team = 0 if c[0] < c[1] else 1
         r.players[sid] = p
     SID_ROOM[sid] = r
     p.tok = TOK.get(sid, "")
@@ -411,6 +425,12 @@ def _disc():
             # đang giữa trận: giữ chỗ REJOIN_S giây để học sinh vào lại (nhân vật đứng yên)
             p.away = True; p.awayAt = time.time(); p.dx = p.dy = 0.0; p.fire = p.fl = p.sh = False
             return
+        q = p or (r.specs.get(sid) if r else None)
+        if q and not q.bot and q.tok and r.state == "lobby" and r.host == sid and HOST_KEEP_S > 0 and not r.dead:
+            # chủ phòng đóng trang / rớt mạng ở phòng chờ: giữ ghế chủ phòng HOST_KEEP_S giây, vào lại (cùng trình duyệt) là nhận lại
+            q.away = True; q.awayAt = time.time()
+            push(r)
+            return
         drop(sid)
 
 
@@ -430,6 +450,49 @@ def on_create(d):
         emit("me", {"pid": p.pid}); push(r)
 
 
+def late_slot(r):
+    """Chỗ cho người vào muộn: (đội, nhân vật bot đang giữ hộ hoặc None). Ưu tiên đội ít người thật hơn; nhận lại nhân vật bot giữ hộ trước, rồi mới tới ghế trống."""
+    best = None
+    for t in ((0,) if r.pve else (0, 1)):
+        mem = [q for q in r.players.values() if q.team == t]
+        hum = sum(1 for q in mem if not q.bot)
+        proxy = next((q for q in mem if q.proxy), None)
+        if proxy:
+            cand = (hum, 0, t, proxy)
+        elif len(mem) < r.size:
+            cand = (hum, 1, t, None)
+        else:
+            continue
+        if best is None or cand[:2] < best[:2]:
+            best = cand
+    return (best[2], best[3]) if best else None
+
+
+def late_join(r, sid, nick, slot):
+    t, old = slot
+    now = time.time()
+    if old is None:
+        p = add_player(r, sid, nick, team=t)
+        p.up = r.up[t]; p.reset(); spawn(r, p)
+    else:  # nhận lại nhân vật do bot đang giữ hộ người đã rời (giữ máu, cờ, điểm)
+        r.players.pop(old.sid, None)
+        p = old
+        p.sid, p.nick, p.bot, p.proxy, p.auto, p.away = sid, nick, False, False, False, False
+        p.tok = TOK.get(sid, ""); p.g = clamp_g(SID_G.get(sid)); p.w = 0
+        p.ai = new_ai(); p.dx = p.dy = 0.0; p.fire = p.fl = p.sh = False
+        p.ep += 1; p.tpos = now + 2.0
+        r.players[sid] = p; SID_ROOM[sid] = r
+        sio.server.enter_room(sid, r.code, namespace="/")
+    p.act = now
+    r.ev.append(["nf", 9, p.pid, 0, -1])
+    return p
+
+
+def rd_payload(r):
+    return {"i": r.round, "n": r.rounds, "q": {"question": r.q["question"], "options": r.q["options"]},
+            "players": roster(r), "map": MAPINFO, "up": list(r.up)}
+
+
 @sio.on("join")
 def on_join(d):
     d = d or {}; sid = request.sid
@@ -438,12 +501,26 @@ def on_join(d):
         r = ROOMS.get(str(d.get("code")))
         if not r:
             return emit("err", "Phòng không còn tồn tại.")
+        tok = TOK.get(sid, "")
+        if tok and tok in r.banned:
+            return emit("err", "Chủ phòng đã mời bạn ra khỏi phòng này, bạn không vào lại được.")
+        if r.locked:
+            return emit("err", "Phòng đã bị chủ phòng khóa, hiện không ai vào được.")
         if r.pw and not hmac.compare_digest(r.pw, hpw(clean(d.get("pw"), 20))):
             return emit("err", "Sai mật khẩu phòng.")
-        if len(r.specs) >= MAX_SPECS and (r.state != "lobby" or sum(1 for q in r.players.values() if not q.bot) >= cap(r)):
+        want = r.state == "playing" and r.late and not r.eve and not r.dead and not r.abort
+        if not (want and late_slot(r)) and len(r.specs) >= MAX_SPECS and (r.state != "lobby" or sum(1 for q in r.players.values() if not q.bot) >= cap(r)):
             return emit("err", "Ghế khán giả đã đầy.")
         drop(sid)
-        # phòng đang chơi hoặc đã đủ người: vào ghế khán giả
+        slot = late_slot(r) if want else None  # tính SAU drop: người vừa thoát trận có thể nhận lại chính nhân vật cũ
+        if slot:
+            p = late_join(r, sid, nick, slot)
+            emit("me", {"pid": p.pid}); push(r)
+            sio.emit("ros", roster(r), to=r.code)  # các client khác cần biết tên người mới
+            if r.q:
+                emit("rd", rd_payload(r))
+            return
+        # phòng đang chơi (không cho vào muộn) hoặc đã đủ người: vào ghế khán giả
         spec = r.state != "lobby" or len(r.players) >= cap(r)
         p = add_player(r, sid, nick, spec)
         emit("me", {"pid": p.pid}); push(r)
@@ -461,18 +538,26 @@ def on_leave():
 
 @sio.on("rejoin")
 def on_rejoin(d):
-    """Học sinh lỡ đóng trang / mất mạng giữa trận: nối lại đúng người chơi cũ (khớp token của trình duyệt)."""
+    """Vào lại đúng người chơi cũ (khớp token trình duyệt): giữa trận, hoặc chủ phòng đóng trang ở phòng chờ."""
     d = d or {}; sid = request.sid
     tok = TOK.get(sid, "")
     with LOCK:
         r = ROOMS.get(str(d.get("code")))
-        old = None
-        if r and tok and r.state == "playing" and sid not in r.players:
-            old = next((k for k, q in r.players.items()
-                        if not q.bot and q.tok and hmac.compare_digest(q.tok.encode(), tok.encode())), None)
+        old = od = None
+        if r and tok and sid not in r.players and sid not in r.specs:
+            for dd in (r.players, r.specs):
+                for k, q in dd.items():
+                    if q.bot or not q.tok or not hmac.compare_digest(q.tok.encode(), tok.encode()):
+                        continue
+                    if (dd is r.players and r.state == "playing") or q.away:
+                        old, od = k, dd
+                        break
+                if old is not None:
+                    break
         if old is None:
-            return emit("rejoin_fail", "Không kết nối lại được: trận đã kết thúc hoặc đã hết thời gian chờ.")
-        p = r.players.pop(old)
+            return emit("rejoin_fail", "Không kết nối lại được: phòng/trận đã kết thúc hoặc đã hết thời gian giữ chỗ.")
+        playing = r.state == "playing"
+        p = od.pop(old)
         SID_ROOM.pop(old, None)
         try:
             leave_room(r.code, sid=old)
@@ -483,18 +568,41 @@ def on_rejoin(d):
         was_away = p.away
         p.sid, p.away = sid, False
         p.auto = False; p.act = time.time(); p.ai = new_ai()
-        if was_away:
+        if was_away and playing:
             r.ev.append(["nf", 5, p.pid, 0, -1])  # bảng tin: quay lại, tự điều khiển tiếp
         p.dx = p.dy = 0.0; p.fire = p.fl = p.sh = False
         p.ep += 1; p.tpos = time.time() + 2.0
-        r.players[sid] = p; SID_ROOM[sid] = r
+        od[sid] = p; SID_ROOM[sid] = r
         join_room(r.code, sid=sid)
         if r.host == old:
             r.host = sid
         emit("rejoined"); emit("me", {"pid": p.pid}); push(r)
-        if r.q:
-            emit("rd", {"i": r.round, "n": r.rounds, "q": {"question": r.q["question"], "options": r.q["options"]},
-                        "players": roster(r), "map": MAPINFO})
+        if playing and r.q and od is r.players:
+            emit("rd", rd_payload(r))
+
+
+def seat_to(r, sid, t):
+    """Đổi chỗ ngồi trong phòng chờ: t = 0/1 (đội) hoặc 2 (khán giả). Trả về chuỗi lỗi hoặc None."""
+    p = r.players.get(sid) or r.specs.get(sid)
+    if not p:
+        return None
+    cur = 2 if sid in r.specs else p.team
+    if t == cur:
+        return None
+    if t == 2:
+        if len(r.specs) >= MAX_SPECS:
+            return "Ghế khán giả đã đầy."
+        r.players.pop(sid, None); p.team = -1; r.specs[sid] = p
+    else:
+        if r.eve:
+            return "Phòng EvE: cả hai đội do máy điều khiển, bạn chỉ xem được."
+        if r.pve and t == 1:
+            return "Phòng PvE: đội Đỏ do máy điều khiển."
+        if sum(1 for q in r.players.values() if q.team == t) >= r.size:
+            return "Đội này đã đủ người."
+        r.specs.pop(sid, None); p.team = t; r.players[sid] = p
+    push(r)
+    return None
 
 
 @sio.on("seat")
@@ -508,25 +616,11 @@ def on_seat(d):
         t = num(d, 0, 2, -1) if not isinstance(d, dict) else num(d.get("t"), 0, 2, -1)
         if t < 0:
             return
-        p = r.players.get(sid) or r.specs.get(sid)
-        if not p:
-            return
-        cur = 2 if sid in r.specs else p.team
-        if t == cur:
-            return
-        if t == 2:
-            if len(r.specs) >= MAX_SPECS:
-                return emit("err", "Ghế khán giả đã đầy.")
-            r.players.pop(sid, None); p.team = -1; r.specs[sid] = p
-        else:
-            if r.eve:
-                return emit("err", "Phòng EvE: cả hai đội do máy điều khiển, bạn chỉ xem được.")
-            if r.pve and t == 1:
-                return emit("err", "Phòng PvE: đội Đỏ do máy điều khiển.")
-            if sum(1 for q in r.players.values() if q.team == t) >= r.size:
-                return emit("err", "Đội này đã đủ người.")
-            r.specs.pop(sid, None); p.team = t; r.players[sid] = p
-        push(r)
+        if r.tlock and r.host != sid:
+            return emit("err", "Chủ phòng đã khóa đội: bạn không đổi đội được.")
+        err = seat_to(r, sid, t)
+        if err:
+            emit("err", err)
 
 
 @sio.on("team")
@@ -540,10 +634,132 @@ def on_team():
             return
         if r.pve or r.eve:
             return emit("err", "Phòng PvE: đội Đỏ do máy điều khiển." if r.pve else "Phòng EvE: cả hai đội do máy điều khiển.")
+        if r.tlock and r.host != request.sid:
+            return emit("err", "Chủ phòng đã khóa đội: bạn không đổi đội được.")
         t = 1 - p.team
         if sum(1 for q in r.players.values() if q.team == t) >= r.size:
             return emit("err", "Đội kia đã đủ người.")
         p.team = t; push(r)
+
+
+# ---------- chỉnh phòng chờ: đổi tên, cài đặt, nhường chủ phòng, kick, chuyển đội ----------
+def host_room(sid):
+    r = SID_ROOM.get(sid)
+    return r if r and r.host == sid and not r.dead else None
+
+
+def find_member(r, pid):
+    for dd in (r.players, r.specs):
+        for k, q in dd.items():
+            if q.pid == pid and not q.bot:
+                return k, q
+    return None, None
+
+
+@sio.on("rename")
+def on_rename(d):
+    """Đổi tên khi đang ở phòng chờ (đang trong trận thì không đổi để bảng tin/thống kê khỏi lẫn)."""
+    sid = request.sid
+    with LOCK:
+        r = SID_ROOM.get(sid)
+        p = (r.players.get(sid) or r.specs.get(sid)) if r else None
+        if not p or r.state != "lobby":
+            return
+        nick = clean(d.get("nick") if isinstance(d, dict) else d, 14)
+        if not nick:
+            return emit("err", "Tên không được để trống.")
+        if nick != p.nick:
+            p.nick = nick; push(r)
+
+
+@sio.on("cfg")
+def on_cfg(d):
+    """Chủ phòng chỉnh cài đặt. Khóa phòng / cho vào muộn đổi được bất cứ lúc nào; còn lại chỉ ở phòng chờ."""
+    d = d if isinstance(d, dict) else {}
+    with LOCK:
+        r = host_room(request.sid)
+        if not r:
+            return
+        if "locked" in d:
+            r.locked = bool(d["locked"])
+        if "late" in d:
+            r.late = bool(d["late"]) and not r.eve
+        if any(k in d for k in ("size", "rounds", "tlock", "rnd")):
+            if r.state != "lobby":
+                emit("err", "Số người mỗi đội, số round, khóa đội và chia đội ngẫu nhiên chỉ đổi được ở phòng chờ.")
+            else:
+                if "tlock" in d:
+                    r.tlock = bool(d["tlock"])
+                if "rnd" in d:
+                    r.rnd = bool(d["rnd"]) and not (r.pve or r.eve)
+                if "rounds" in d:
+                    r.rounds = num(d["rounds"], 1, 5, r.rounds)
+                if "size" in d:
+                    n = num(d["size"], 1, 5, r.size)
+                    top = max(sum(1 for q in r.players.values() if q.team == t and not q.bot) for t in (0, 1))
+                    if n < top:
+                        emit("err", f"Không đổi sang {n}v{n} được: đang có đội {top} người.")
+                    else:
+                        r.size = n
+        push(r)  # luôn gửi lại để ô chọn của chủ phòng khớp với trạng thái thật (kể cả khi bị từ chối)
+
+
+@sio.on("cede")
+def on_cede(d):
+    """Nhường chủ phòng cho một người đang ở trong phòng."""
+    with LOCK:
+        r = host_room(request.sid)
+        if not r or not isinstance(d, dict):
+            return
+        k, q = find_member(r, num(d.get("pid"), 0, 10 ** 9, -1))
+        if not q or k == request.sid:
+            return
+        if q.away:
+            return emit("err", "Người này đang mất kết nối, chưa nhường chủ phòng được.")
+        r.host = k
+        push(r)
+
+
+@sio.on("kick")
+def on_kick(d):
+    """Mời một người ra khỏi phòng (không vào lại được bằng trình duyệt đó). Đang giữa trận thì nhân vật do bot chơi tiếp."""
+    with LOCK:
+        r = host_room(request.sid)
+        if not r or not isinstance(d, dict):
+            return
+        k, q = find_member(r, num(d.get("pid"), 0, 10 ** 9, -1))
+        if not q or k == request.sid:
+            return
+        if q.tok:
+            r.banned.add(q.tok)
+        if not q.away:
+            sio.emit("kicked_out", to=k)
+        drop(k)
+
+
+@sio.on("mv")
+def on_mv(d):
+    """Chủ phòng chuyển người khác sang đội 0/1 hoặc ghế khán giả (2); dùng được cả khi đã khóa đội."""
+    with LOCK:
+        r = host_room(request.sid)
+        if not r or r.state != "lobby" or not isinstance(d, dict):
+            return
+        k, q = find_member(r, num(d.get("pid"), 0, 10 ** 9, -1))
+        t = num(d.get("t"), 0, 2, -1)
+        if not q or t < 0:
+            return
+        err = seat_to(r, k, t)
+        if err:
+            emit("err", err)
+
+
+def shuffle_teams(r):
+    """Chia ngẫu nhiên người chơi thật vào hai đội, chênh nhau tối đa 1 người."""
+    mem = [p for p in r.players.values() if not p.bot]
+    random.shuffle(mem)
+    first = random.randint(0, 1)
+    for i, p in enumerate(mem):
+        p.team = (first + i) % 2
 
 
 # ---------- ghép trận tự động ----------
@@ -636,8 +852,12 @@ def on_start():
         elif r.pve:
             if not any(p.team == 0 for p in r.players.values()):
                 return emit("err", "Cần ít nhất 1 người chơi ở đội Xanh.")
+        elif r.rnd and len(r.players) >= 2:
+            pass  # chia đội ngẫu nhiên ngay bên dưới nên không cần kiểm tra đội hiện tại
         elif not r.fill and (not any(p.team == 0 for p in r.players.values()) or not any(p.team == 1 for p in r.players.values())):
             return emit("err", "Mỗi đội cần ít nhất 1 người.")
+        if r.rnd and not (r.pve or r.eve):
+            shuffle_teams(r)
         r.state = "playing"; r.abort = False; r.paused = False; r.beat = time.time()
         sio.start_background_task(run_match, r)
         push(r)
@@ -1879,12 +2099,13 @@ def roster(r):
 
 
 def expire_away(r):
-    """Người chơi mất kết nối quá REJOIN_S giây thì bị loại khỏi trận."""
-    if REJOIN_S <= 0:
+    """Hết thời gian giữ chỗ thì loại: người chơi mất kết nối giữa trận (REJOIN_S), hoặc chủ phòng đóng trang ở phòng chờ (HOST_KEEP_S)."""
+    lim = REJOIN_S if r.state == "playing" else HOST_KEEP_S
+    if lim <= 0:
         return
     now = time.time()
-    for k, q in list(r.players.items()):
-        if q.away and now - q.awayAt > REJOIN_S:
+    for k, q in list(r.players.items()) + list(r.specs.items()):
+        if q.away and now - q.awayAt > lim:
             drop(k)
 
 

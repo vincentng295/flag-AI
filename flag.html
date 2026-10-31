@@ -19,13 +19,15 @@ button,input,select{font:inherit;color:inherit}
 input,select{border:3px solid var(--ink);border-radius:12px;padding:8px 10px;background:#fff;width:100%;-webkit-user-select:text;user-select:text}
 .btn{border:3px solid var(--ink);border-radius:13px;background:#fff;box-shadow:0 3px 0 var(--ink);padding:8px 14px;cursor:pointer;font-weight:800}
 .btn:active{transform:translateY(3px);box-shadow:none}.btn.pri{background:#2fbf71;color:#fff}.btn.dng{background:#ff7b7b}
-.hide{display:none!important}#q.min{display:none!important}.btn.on{background:#fff3b0;outline:3px solid #2fbf71}.gb{display:flex;flex-direction:column;align-items:center;gap:2px}#chars{display:flex;flex-wrap:wrap;gap:6px}#chars .gb{flex:1 1 84px;font-size:12px;padding:4px 2px;line-height:1.15;text-align:center}#chinfo{display:block;margin-top:4px}
+.hide{display:none!important}#q.min{display:none!important}.btn.on{background:#fff3b0;outline:3px solid #2fbf71}.gb{display:flex;flex-direction:column;align-items:center;gap:2px}#chars{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:6px}#chars .gb{min-width:0;justify-content:flex-start;font-size:12px;padding:4px 2px;line-height:1.15;text-align:center}#chinfo{display:block;margin-top:4px}
 .scr{position:fixed;inset:0;overflow:auto;padding:max(12px,env(safe-area-inset-top)) 14px 20px;touch-action:pan-y}
 .card{background:#fff;border:3px solid var(--ink);border-radius:18px;box-shadow:0 4px 0 var(--ink);padding:12px;margin:0 auto 12px;max-width:640px}
 h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-size:18px}
 .row{display:flex;gap:8px;align-items:center;margin:6px 0}.row>*{flex:1}.row>.btn{flex:none}
 .room{display:flex;gap:8px;align-items:center;border:2px solid var(--ink);border-radius:12px;padding:6px 10px;margin:6px 0;background:#f1f8ff}
 .room .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.room small{opacity:.7}
+.cfg{border:3px solid var(--ink);border-radius:14px;padding:8px 10px;margin-top:10px;background:#fffbe6}.cfg label{display:block;font-size:13px;margin:4px 0 2px}.cfg label.ck{display:flex;align-items:center;gap:8px;font-size:14px;margin:5px 0}.cfg input[type=checkbox]{width:auto;flex:none;transform:scale(1.25)}.cfg .dis{opacity:.6}
+.tm .pl{display:flex;align-items:center;flex-wrap:wrap;gap:3px}.tm .pl .aw{opacity:.6}.btn.mini{padding:0 7px;font-size:13px;line-height:22px;border-width:2px;border-radius:9px;box-shadow:0 2px 0 var(--ink)}#rme summary{cursor:pointer}#rme .card{box-shadow:none;margin:8px 0;max-width:none}
 .teams{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .tm{border:3px solid var(--ink);border-radius:14px;padding:8px;min-height:140px}.tm.t0{background:#dbe9ff}.tm.t1{background:#ffe0e1}.tm div{padding:3px 0}
 #toast{position:fixed;left:50%;top:12px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:8px 16px;border-radius:14px;z-index:50;max-width:90vw;text-align:center}
@@ -107,8 +109,8 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
  <div id="verr" class="card hide vbar" style="background:#ffe0e1"></div>
  <div class="dock">
   <section class="gl">
-   <div class="card"><h2>Tên của bạn</h2><div class="row"><input id="nick" maxlength="14" placeholder="Nhập tên..."><button class="btn" id="dice" title="Tên ngẫu nhiên">🎲</button></div></div>
-   <div class="card"><h2>Nhân vật</h2><div id="chars"></div><small id="chinfo"></small>
+   <div class="card" id="ncard"><h2>Tên của bạn</h2><div class="row"><input id="nick" maxlength="14" placeholder="Nhập tên..."><button class="btn" id="dice" title="Tên ngẫu nhiên">🎲</button></div></div>
+   <div class="card" id="ccard"><h2>Nhân vật</h2><div id="chars"></div><small id="chinfo"></small>
     <details><summary>ℹ️ Hướng dẫn điều khiển</summary>Trong trận: nút 1/2/3 (hoặc phím 1/2/3) = 🔫 súng bong bóng / 🗡️ kiếm / 🚀 súng tên lửa (nhặt trên bản đồ). Khi cầm kiếm: giữ và kéo nút 🛡️ để chọn hướng đỡ.</details></div>
    <div class="card"><h2>⚡ Ghép trận tự động</h2>
     <div class="row" id="qidle"><select id="qsize"><option value="1">1 vs 1</option><option value="2" selected>2 vs 2</option><option value="3">3 vs 3</option><option value="4">4 vs 4</option><option value="5">5 vs 5</option></select><button class="btn pri" id="bq">Tìm trận</button></div>
@@ -147,6 +149,14 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
  <div class="card"><h2 id="rt"></h2><small id="rs"></small>
   <div class="teams" style="margin-top:10px"><div class="tm t0"><b id="t0h">🔵 Đội Xanh</b><div id="t0"></div></div><div class="tm t1"><b id="t1h">🔴 Đội Đỏ</b><div id="t1"></div></div></div>
   <div class="tm" id="tsp" style="margin-top:10px;min-height:0"><b>👁 Ghế khán giả</b> <small>(chỉ xem, không chơi)</small><div id="t2"></div></div>
+  <details id="rme" style="margin-top:10px"><summary><b>✏️ Đổi tên / chọn nhân vật của tôi</b></summary><div id="rslot"></div><div class="row"><button class="btn pri" id="brn">Áp dụng tên mới</button></div></details>
+  <div class="cfg" id="rcfg"><b>⚙️ Cài đặt phòng</b> <small id="rcn"></small>
+   <div class="row"><div><label for="csize">Số người mỗi đội</label><select id="csize"><option value="1">1 vs 1</option><option value="2">2 vs 2</option><option value="3">3 vs 3</option><option value="4">4 vs 4</option><option value="5">5 vs 5</option></select></div>
+   <div><label for="crounds">Số round</label><select id="crounds"><option value="1">1 round</option><option value="3">3 round</option><option value="5">5 round</option></select></div></div>
+   <label class="ck"><input type="checkbox" id="clock"> 🚫 Khóa phòng (không ai vào được nữa)</label>
+   <label class="ck" id="ctlockw"><input type="checkbox" id="ctlock"> 🔐 Khóa đội (người mới vào không đổi đội được)</label>
+   <label class="ck" id="crndw"><input type="checkbox" id="crnd"> 🎲 Chia đội ngẫu nhiên khi bắt đầu</label>
+   <label class="ck"><input type="checkbox" id="clate"> 🚪 Cho người mới vào chơi khi trận đã bắt đầu</label></div>
   <div class="row" style="margin-top:10px"><button class="btn" id="bs0">🔵 Đội Xanh</button><button class="btn" id="bs1">🔴 Đội Đỏ</button><button class="btn" id="bs2">👁 Khán giả</button><button class="btn pri" id="bstart">Bắt đầu</button><button class="btn dng" id="bleave">Rời phòng</button></div>
   <small id="rnote">Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Mỗi đội cần ít nhất 1 người.</small></div>
 </div>
@@ -174,7 +184,8 @@ const FC=['#ff9f1c','#9b5de5','#06b6a4','#e6c200'], TC=['#2d7ff9','#ff5a5f'], TN
 let sock,pid=0,room=null,M=null,names={},S=null,inGame=false,TER=null,TOP=null,MMB=null,lastTick=-1,lastPh='';
 const disp={};
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.remove('hide');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.add('hide'),3200)}
-function show(id){document.body.classList.toggle('ing',id==='game');if(id!=='game')$('#autob').classList.add('hide');if(typeof lobbyMusic==='function')lobbyMusic(id!=='game');for(const s of ['lobby','roomscr','game'])$('#'+s).classList.toggle('hide',s!==id)}
+function show(id){document.body.classList.toggle('ing',id==='game');if(id!=='game')$('#autob').classList.add('hide');if(typeof lobbyMusic==='function')lobbyMusic(id!=='game');for(const s of ['lobby','roomscr','game'])$('#'+s).classList.toggle('hide',s!==id);
+ if(id==='roomscr'){const sl=$('#rslot');if($('#ncard').parentElement!==sl)sl.append($('#ncard'),$('#ccard'))}else if(id==='lobby'){const h=$('#lobby .gl');if($('#ncard').parentElement!==h){h.prepend($('#ccard'));h.prepend($('#ncard'))}}}
 $('#nick').value=localStorage.nick||'';$('#nick').oninput=e=>localStorage.nick=e.target.value;
 const nick=()=>$('#nick').value.trim()||'Người chơi';
 const isSpec=()=>!names[pid],isHost=()=>room&&room.host===pid, myTeam=()=>names[pid]?names[pid].team:0;
@@ -247,10 +258,12 @@ function start(V){
  $('#brjc').onclick=rjCancel;
  sock.on('err',toast);sock.on('me',d=>pid=d.pid);
  sock.on('rooms',list=>{const el=$('#rooms');
-  el.innerHTML=list.length?list.map(r=>`<div class="room"><div class="nm">${r.pw?'🔒 ':''}${r.pve?'<span class="tag">PvE</span>':''}${r.eve?'<span class="tag">EvE</span>':''}${esc(r.name)}<br><small>#${r.code} · ${r.size}v${r.size} · ${r.eve?'🤖 máy đấu máy':r.n+'/'+r.max}${r.ns?` · 👁${r.ns}`:''} · ${r.rounds} round${r.state!=='lobby'?' · đang chơi':''}</small></div>
-   <button class="btn pri" data-c="${r.code}" data-p="${r.pw?1:0}" ${r.state!=='lobby'||r.n>=r.max?'title="Vào ghế khán giả"':''}>${r.state!=='lobby'||r.n>=r.max?'👁 Xem':'Vào'}</button></div>`).join(''):'<small>Chưa có phòng nào. Hãy tạo phòng!</small>';
+  el.innerHTML=list.length?list.map(r=>`<div class="room"><div class="nm">${r.locked?'🚫 ':''}${r.pw?'🔒 ':''}${r.pve?'<span class="tag">PvE</span>':''}${r.eve?'<span class="tag">EvE</span>':''}${esc(r.name)}<br><small>#${r.code} · ${r.size}v${r.size} · ${r.eve?'🤖 máy đấu máy':r.n+'/'+r.max}${r.ns?` · 👁${r.ns}`:''} · ${r.rounds} round${r.state!=='lobby'?' · đang chơi':''}</small></div>
+   <button class="btn pri" data-c="${r.code}" data-p="${r.pw?1:0}" ${r.locked?'disabled title="Phòng đã khóa"':r.state!=='lobby'&&r.late?'title="Phòng cho vào chơi giữa trận"':r.state!=='lobby'||r.n>=r.max?'title="Vào ghế khán giả"':''}>${r.locked?'🚫 Khóa':r.state!=='lobby'&&r.late?'⚔️ Vào chơi':r.state!=='lobby'||r.n>=r.max?'👁 Xem':'Vào'}</button></div>`).join(''):'<small>Chưa có phòng nào. Hãy tạo phòng!</small>';
   el.querySelectorAll('button').forEach(b=>b.onclick=()=>{let pw='';if(b.dataset.p==='1'){pw=prompt('Nhập mật khẩu phòng:');if(pw===null)return}sock.emit('join',{code:b.dataset.c,pw,nick:nick()})})});
- sock.on('room',r=>{if(rjIgnore)return;room=r;closeModal();qReset();if(!inGame){if(!window.endUp){show('roomscr');drawRoom()}}else updPause()});
+ sock.on('room',r=>{if(rjIgnore)return;room=r;closeModal();qReset();if(!inGame){if(r.state==='lobby'){try{if(r.host===pid)localStorage.lastRoom=r.code;else clearLast()}catch(e){}}if(!window.endUp){show('roomscr');drawRoom()}}else updPause()});
+ sock.on('kicked_out',()=>{clearLast();rjIgnore=false;room=null;qReset();leaveGameUI();show('lobby');toast('Bạn đã bị chủ phòng mời ra khỏi phòng.')});
+ sock.on('ros',l=>{names={};l.forEach(p=>names[p.pid]=p)});
  sock.on('left',()=>{window.endUp=false;rjIgnore=false;clearLast();room=null;qReset();leaveGameUI();show('lobby')});
  sock.on('rd',d=>{if(rjIgnore)return;rjDone();inGame=true;window.endUp=false;M=d.map;names={};d.players.forEach(p=>names[p.pid]=p);if(room&&names[pid]){try{localStorage.lastRoom=room.code}catch(e){}}S=null;lastTick=-1;lastPh='';LB.length=0;lCool=0;lSw=0;aInit=false;$('#ov').classList.add('hide');$('#pz').classList.add('hide');
   if(!TER||TER.W!==M.W)buildWorld();show('game');fsEnter();resize();AU.bpm=140;musicStart();duck(false);
@@ -296,16 +309,32 @@ function start(V){
  $('#bq').onclick=()=>{sock.emit('queue',{nick:nick(),size:$('#qsize').value});$('#qidle').classList.add('hide');$('#qwait').classList.remove('hide');$('#qtxt').textContent='Đang tìm trận...'};
  $('#bqc').onclick=()=>{sock.emit('unqueue');qReset()};
  sock.on('qs',d=>{$('#qidle').classList.add('hide');$('#qwait').classList.remove('hide');$('#qtxt').textContent=`Đang tìm trận ${d.size}v${d.size}... ${d.n}/${d.need}`});
- for(const t of [0,1,2])$('#bs'+t).onclick=()=>sock.emit('seat',t);$('#bstart').onclick=()=>{fsEnter();sock.emit('start')};$('#bleave').onclick=()=>sock.emit('leave');
+ for(const t of [0,1,2])$('#bs'+t).onclick=()=>sock.emit('seat',t);
+ const cfg=o=>sock.emit('cfg',o);$('#csize').onchange=e=>cfg({size:+e.target.value});$('#crounds').onchange=e=>cfg({rounds:+e.target.value});
+ for(const [i,k] of [['clock','locked'],['ctlock','tlock'],['crnd','rnd'],['clate','late']])$('#'+i).onchange=e=>cfg({[k]:e.target.checked});
+ const rename=()=>{if(room&&room.state==='lobby'&&!inGame)sock.emit('rename',{nick:nick()})};$('#nick').addEventListener('change',rename);$('#brn').onclick=rename;
+ $('#roomscr').addEventListener('click',e=>{const b=e.target.closest('button[data-a]');if(!b)return;const a=b.dataset.a,p=+b.dataset.p;
+  if(a==='mv')sock.emit('mv',{pid:p,t:+b.dataset.t});else if(a==='cede'){if(confirm('Nhường chủ phòng cho người này?'))sock.emit('cede',{pid:p})}else if(a==='kick'){if(confirm('Mời người này ra khỏi phòng? Họ sẽ không vào lại được.'))sock.emit('kick',{pid:p})}});$('#bstart').onclick=()=>{fsEnter();sock.emit('start')};$('#bleave').onclick=()=>sock.emit('leave');
  requestAnimationFrame(frame);
 }
 function closeModal(){$('#modal').classList.add('hide')}
 function qReset(){$('#qidle').classList.remove('hide');$('#qwait').classList.add('hide')}
-function drawRoom(){const r=room;$('#bs0').classList.toggle('hide',!!r.eve);$('#bs1').classList.toggle('hide',!!(r.pve||r.eve));$('#t0h').textContent=r.eve?'🤖 Đội Xanh (máy)':'🔵 Đội Xanh';$('#t1h').textContent=(r.pve||r.eve)?'🤖 Đội Đỏ (máy)':'🔴 Đội Đỏ';$('#rnote').textContent=r.eve?'Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Phòng EvE không cần người chơi: máy tự lập hai đội bot, mọi người đều là khán giả.':'Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Mỗi đội cần ít nhất 1 người.';$('#rt').textContent=(r.pw?'🔒 ':'')+r.name+'  #'+r.code;$('#rs').textContent=`${r.pve?'PvE (đấu với máy) · ':''}${r.eve?'EvE (máy đấu máy, demo) · ':''}Chế độ ${r.size}v${r.size} · ${r.rounds} round · mỗi round 3 phút`;
- for(const t of [0,1])$('#t'+t).innerHTML=r.teams[t].map(p=>`<div>${p.pid===pid?'⭐ ':''}${esc(p.nick)}${p.pid===r.host?' 👑':''}</div>`).join('');
- $('#t2').innerHTML=(r.specs||[]).map(p=>`<span style="display:inline-block;margin:2px 8px 2px 0">${p.pid===pid?'⭐ ':''}${esc(p.nick)}${p.pid===r.host?' 👑':''}</span>`).join('')||'<small>Chưa có ai</small>';
- const mine=(r.specs||[]).some(p=>p.pid===pid)?2:r.teams[0].some(p=>p.pid===pid)?0:1;for(const t of [0,1,2])$('#bs'+t).classList.toggle('on',t===mine);
- $('#bstart').classList.toggle('hide',r.host!==pid)}
+function plRow(p,t,r){const me=p.pid===pid;let h=`${me?'⭐ ':''}${esc(p.nick)}${p.pid===r.host?' 👑':''}${p.aw?' <small>💤 mất kết nối</small>':''}`;
+ if(r.host===pid&&!me){const b=(a,x,ti,tx)=>`<button class="btn mini" data-a="${a}" data-p="${p.pid}"${x!=null?` data-t="${x}"`:''} title="${ti}">${tx}</button>`;let c='';
+  if(t===2){if(!r.eve){c+=b('mv',0,'Chuyển sang đội Xanh','🔵');if(!r.pve)c+=b('mv',1,'Chuyển sang đội Đỏ','🔴')}}else if(!r.pve&&!r.eve)c+=b('mv',1-t,'Chuyển sang đội kia','⇄');
+  if(!p.aw)c+=b('cede',null,'Nhường chủ phòng','👑');c+=b('kick',null,'Mời ra khỏi phòng','✖');h+=' '+c}
+ return `<div class="pl${p.aw?' aw':''}">${h}</div>`}
+function drawRoom(){const r=room,host=r.host===pid,lob=r.state==='lobby';$('#bs0').classList.toggle('hide',!!r.eve);$('#bs1').classList.toggle('hide',!!(r.pve||r.eve));$('#t0h').textContent=r.eve?'🤖 Đội Xanh (máy)':'🔵 Đội Xanh';$('#t1h').textContent=(r.pve||r.eve)?'🤖 Đội Đỏ (máy)':'🔴 Đội Đỏ';
+ $('#rnote').textContent=(r.eve?'Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Phòng EvE không cần người chơi: máy tự lập hai đội bot, mọi người đều là khán giả.':'Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Mỗi đội cần ít nhất 1 người.')+(r.rnd&&!r.pve&&!r.eve?' 🎲 Khi bắt đầu, mọi người được chia ngẫu nhiên vào hai đội.':'')+(r.tlock&&!r.pve&&!r.eve?' 🔐 Đội đã bị khóa: chỉ chủ phòng chuyển đội được.':'');
+ $('#rt').textContent=(r.locked?'🚫 ':'')+(r.pw?'🔒 ':'')+r.name+'  #'+r.code;$('#rs').textContent=`${r.pve?'PvE (đấu với máy) · ':''}${r.eve?'EvE (máy đấu máy, demo) · ':''}Chế độ ${r.size}v${r.size} · ${r.rounds} round · mỗi round 3 phút${r.locked?' · phòng đã khóa':''}${r.late?' · cho vào giữa trận':''}`;
+ for(const t of [0,1])$('#t'+t).innerHTML=r.teams[t].map(p=>plRow(p,t,r)).join('');
+ $('#t2').innerHTML=(r.specs||[]).map(p=>plRow(p,2,r)).join('')||'<small>Chưa có ai</small>';
+ const mine=(r.specs||[]).some(p=>p.pid===pid)?2:r.teams[0].some(p=>p.pid===pid)?0:1;for(const t of [0,1,2]){$('#bs'+t).classList.toggle('on',t===mine);$('#bs'+t).disabled=!!(r.tlock&&!host)}
+ $('#csize').value=r.size;$('#crounds').value=r.rounds;for(const [i,k] of [['clock','locked'],['ctlock','tlock'],['crnd','rnd'],['clate','late']])$('#'+i).checked=!!r[k];
+ for(const i of ['csize','crounds','ctlock','crnd'])$('#'+i).disabled=!host||!lob;for(const i of ['clock','clate'])$('#'+i).disabled=!host;
+ $('#ctlockw').classList.toggle('hide',!!(r.pve||r.eve));$('#crndw').classList.toggle('hide',!!(r.pve||r.eve));$('#clate').closest('label').classList.toggle('hide',!!r.eve);
+ $('#rcn').textContent=host?'(bạn là chủ phòng)':'(chỉ chủ phòng chỉnh được)';
+ $('#bstart').classList.toggle('hide',!host)}
 function banner(t){const b=$('#banner');b.textContent=t;b.classList.remove('go');void b.offsetWidth;b.classList.add('go')}
 
 /* ================= NÚT: TOÀN MÀN HÌNH / ÂM THANH / TẠM DỪNG / THOÁT ================= */
@@ -762,6 +791,7 @@ function feedEv(e){
   else if(k===4)feedAdd(`🤖 ${feedNm(e[2])} đang AFK, bot chơi thay`);
   else if(k===5)feedAdd(`✅ ${feedNm(e[2])} đã quay lại, tự điều khiển tiếp`);
   else if(k===6)feedAdd(`🚪 ${feedNm(e[2])} đã rời trận, bot chơi thay`);
+  else if(k===9)feedAdd(`🆕 ${feedNm(e[2])} đã vào trận giữa chừng`);
   else if(k===7)feedAdd(`⛏️ ${feedNm(e[2])} đã nhổ lá cờ đáp án ${feedFl(e[3])}`);
   else if(k===8)feedAdd(`🔄 ${feedNm(e[2])} đã thay lá cờ đáp án ${feedFl(e[3])} bằng lá ${feedFl(e[4])}, cờ cũ về vị trí ban đầu`);
   else feedAdd(`${feedNm(e[2])} đã thả lá cờ đáp án ${feedFl(e[3])}`)}

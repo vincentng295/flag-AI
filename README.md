@@ -108,6 +108,14 @@ Chỉ số nằm ở bảng `CHARS` đầu `main.py` (máu cộng thêm, hệ s�
 - Máy tính: `W A S D` hoặc phím mũi tên để di chuyển, chuột để ngắm, `Space` hoặc bấm chuột trái để tấn công, phím **`1`** súng bong bóng, **`2`** kiếm gỗ, **`3`** súng tên lửa (`E` / `Q` đổi vũ khí lần lượt), **giữ chuột phải hoặc `Shift` để giơ khiên** (khi cầm kiếm), `G` để thả cờ / nhổ cờ nhà (khi đứng cạnh cờ đã cắm), `P` hoặc `Esc` để tạm dừng, `M` để tắt/bật âm thanh, bấm thanh điểm để xem thống kê (`Esc` để đóng).
 - Điện thoại: cần trái để di chuyển, cần phải để ngắm và tự bắn, nút **1** 🔫 / **2** 🗡️ / **3** 🚀 (hiện số đạn) để chọn vũ khí, nút 🛡️ (kéo/giữ) để giơ khiên, nút 🏳️ để thả cờ (khi vác cờ) và đổi thành ⛏️ để nhổ cờ khi đứng gần lá cờ nhà đã cắm. Nên xoay ngang màn hình. Vị trí các nút có thể kéo chỉnh trong game.
 - Chủ phòng 👑 là người duy nhất bấm Bắt đầu và Tạm dừng.
+- **Phòng chờ:** ai cũng đổi được **tên** (mục ✏️, bấm *Áp dụng tên mới*) và chọn **nhân vật** ngay trong phòng chờ. Chủ phòng 👑 có thêm mục **⚙️ Cài đặt phòng** và các nút cạnh tên từng người:
+  - **Đổi chế độ 1v1 … 5v5** và số round, miễn là không đội nào đang đông hơn cỡ mới (nếu không sẽ báo lỗi và giữ nguyên).
+  - **Giữ ghế chủ phòng:** chủ phòng đóng trang / rớt mạng ở phòng chờ vẫn được giữ ghế `HOST_KEEP_SECONDS` giây (mặc định 120). Mở lại game bằng đúng trình duyệt đó là nhận lại phòng; hết hạn thì quyền chủ phòng chuyển cho người kế tiếp.
+  - **Nhường chủ phòng** (👑) và **Kick** (✖): người bị kick không vào lại được phòng đó bằng trình duyệt cũ. Kick giữa trận thì nhân vật do bot chơi tiếp.
+  - **Khóa phòng:** không ai vào được nữa (người đang giữ chỗ chờ vào lại vẫn vào được). Bật/tắt được cả khi đang chơi.
+  - **Khóa đội:** người chơi thường không tự đổi đội được; chủ phòng vẫn tự đổi và chuyển người khác (⇄ / 🔵 / 🔴).
+  - **Chia đội ngẫu nhiên:** khi bấm Bắt đầu, toàn bộ người chơi được xáo ngẫu nhiên vào hai đội (chênh tối đa 1 người), ví dụ 10 người thành 5v5. Không áp dụng cho PvE/EvE.
+  - **Cho vào giữa trận:** người mới vào phòng đang chơi sẽ được nhận một chỗ trống, hoặc **nhận lại nhân vật do bot đang giữ hộ** người đã rời (giữ máu, cờ, điểm). Hết chỗ thì vào ghế khán giả như cũ. Bảng tin báo "đã vào trận giữa chừng".
 
 ## Cài đặt
 
@@ -157,6 +165,7 @@ cp .env.example .env
 | `TLS_REFRESH_HOURS` | `12` | Tự tải lại chứng chỉ sau mỗi bấy nhiêu giờ (hữu ích khi cert gia hạn) |
 | `MAX_SPECTATORS` | `30` | Số khán giả tối đa mỗi phòng |
 | `REJOIN_SECONDS` | `90` | Giữ chỗ cho người mất kết nối giữa trận (giây), `0` = tắt |
+| `HOST_KEEP_SECONDS` | `120` | Giữ ghế chủ phòng khi chủ phòng đóng trang ở phòng chờ (giây), `0` = tắt |
 | `READ_SECONDS` | `10` | Thời gian đọc đề |
 | `PLAY_SECONDS` | `170` | Thời gian tranh cờ |
 | `RESULT_SECONDS` | `12` | Thời gian hiện kết quả |
