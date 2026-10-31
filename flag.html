@@ -26,6 +26,7 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 .row{display:flex;gap:8px;align-items:center;margin:6px 0}.row>*{flex:1}.row>.btn{flex:none}
 .room{display:flex;gap:8px;align-items:center;border:2px solid var(--ink);border-radius:12px;padding:6px 10px;margin:6px 0;background:#f1f8ff}
 .room .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.room small{opacity:.7}
+.al{display:inline-block;min-width:20px;height:20px;line-height:17px;border:2px solid var(--ink);border-radius:50%;color:#fff;text-align:center;font-size:13px;font-weight:900;margin-left:2px}.al.no{background:#e3e6ee;color:#7a8499}
 .cfg{border:3px solid var(--ink);border-radius:14px;padding:8px 10px;margin-top:10px;background:#fffbe6}.cfg label{display:block;font-size:13px;margin:4px 0 2px}.cfg label.ck{display:flex;align-items:center;gap:8px;font-size:14px;margin:5px 0}.cfg input[type=checkbox]{width:auto;flex:none;transform:scale(1.25)}.cfg .dis{opacity:.6}
 .tm .pl{display:flex;align-items:center;flex-wrap:wrap;gap:3px}.tm .pl .aw{opacity:.6}.btn.mini{padding:0 7px;font-size:13px;line-height:22px;border-width:2px;border-radius:9px;box-shadow:0 2px 0 var(--ink)}#rme summary{cursor:pointer}#rme .card{box-shadow:none;margin:8px 0;max-width:none}
 .teams{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -163,6 +164,7 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
   <details id="rme" style="margin-top:10px"><summary><b>✏️ Đổi tên / chọn nhân vật của tôi</b></summary><div id="rslot"></div><div class="row"><button class="btn pri" id="brn">Áp dụng tên mới</button></div></details>
   <div class="cfg" id="rcfg"><b>⚙️ Cài đặt phòng</b> <small id="rcn"></small>
    <div class="row"><div><label for="csize">Số người mỗi đội</label><select id="csize"><option value="1">1 vs 1</option><option value="2">2 vs 2</option><option value="3">3 vs 3</option><option value="4">4 vs 4</option><option value="5">5 vs 5</option></select></div>
+   <div><label for="cmap">Bản đồ</label><select id="cmap"><option value="day">☀️ Ban ngày</option><option value="night">🌙 Ban đêm (khó)</option></select></div>
    <div><label for="crounds">Số round</label><select id="crounds"><option value="1">1 round</option><option value="3">3 round</option><option value="5">5 round</option></select></div></div>
    <label class="ck"><input type="checkbox" id="clock"> 🚫 Khóa phòng (không ai vào được nữa)</label>
    <label class="ck" id="ctlockw"><input type="checkbox" id="ctlock"> 🔐 Khóa đội (người mới vào không đổi đội được)</label>
@@ -193,7 +195,7 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 <script>
 const $=s=>document.querySelector(s), esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const FC=['#ff9f1c','#9b5de5','#06b6a4','#e6c200'], TC=['#2d7ff9','#ff5a5f'], TN=['Xanh','Đỏ'], L='ABCD';
-let sock,pid=0,room=null,M=null,names={},S=null,inGame=false,TER=null,TOP=null,MMB=null,lastTick=-1,lastPh='';
+let sock,pid=0,room=null,M=null,NIGHT=false,NC=null,NX=null,names={},S=null,inGame=false,TER=null,TOP=null,MMB=null,lastTick=-1,lastPh='';
 const disp={};
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.remove('hide');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.add('hide'),3200)}
 function show(id){document.body.classList.toggle('ing',id==='game');if(id!=='game')$('#autob').classList.add('hide');if(typeof lobbyMusic==='function')lobbyMusic(id!=='game');for(const s of ['lobby','roomscr','game'])$('#'+s).classList.toggle('hide',s!==id);
@@ -270,24 +272,24 @@ function start(V){
  $('#brjc').onclick=rjCancel;
  sock.on('err',toast);sock.on('me',d=>pid=d.pid);
  sock.on('rooms',list=>{const el=$('#rooms');
-  el.innerHTML=list.length?list.map(r=>`<div class="room"><div class="nm">${r.locked?'🚫 ':''}${r.pw?'🔒 ':''}${r.pve?'<span class="tag">PvE</span>':''}${r.eve?'<span class="tag">EvE</span>':''}${esc(r.name)}<br><small>#${r.code} · ${r.size}v${r.size} · ${r.eve?'🤖 máy đấu máy':r.n+'/'+r.max}${r.ns?` · 👁${r.ns}`:''} · ${r.rounds} round${r.state!=='lobby'?' · đang chơi':''}</small></div>
+  el.innerHTML=list.length?list.map(r=>`<div class="room"><div class="nm">${r.locked?'🚫 ':''}${r.pw?'🔒 ':''}${r.pve?'<span class="tag">PvE</span>':''}${r.eve?'<span class="tag">EvE</span>':''}${r.night?'<span class="tag">🌙</span>':''}${esc(r.name)}<br><small>#${r.code} · ${r.size}v${r.size} · ${r.eve?'🤖 máy đấu máy':r.n+'/'+r.max}${r.ns?` · 👁${r.ns}`:''} · ${r.rounds} round${r.state!=='lobby'?' · đang chơi':''}</small></div>
    <button class="btn pri" data-c="${r.code}" data-p="${r.pw?1:0}" ${r.locked?'disabled title="Phòng đã khóa"':r.state!=='lobby'&&r.late?'title="Phòng cho vào chơi giữa trận"':r.state!=='lobby'||r.n>=r.max?'title="Vào ghế khán giả"':''}>${r.locked?'🚫 Khóa':r.state!=='lobby'&&r.late?'⚔️ Vào chơi':r.state!=='lobby'||r.n>=r.max?'👁 Xem':'Vào'}</button></div>`).join(''):'<small>Chưa có phòng nào. Hãy tạo phòng!</small>';
   el.querySelectorAll('button').forEach(b=>b.onclick=()=>{let pw='';if(b.dataset.p==='1'){pw=prompt('Nhập mật khẩu phòng:');if(pw===null)return}sock.emit('join',{code:b.dataset.c,pw,nick:nick()})})});
  sock.on('room',r=>{if(rjIgnore)return;room=r;closeModal();qReset();if(!inGame){if(r.state==='lobby'){try{if(r.host===pid)localStorage.lastRoom=r.code;else clearLast()}catch(e){}}if(!window.endUp){show('roomscr');drawRoom()}}else updPause()});
  sock.on('kicked_out',()=>{clearLast();rjIgnore=false;room=null;qReset();leaveGameUI();show('lobby');toast('Bạn đã bị chủ phòng mời ra khỏi phòng.')});
  sock.on('ros',l=>{names={};l.forEach(p=>names[p.pid]=p)});
  sock.on('left',()=>{window.endUp=false;rjIgnore=false;clearLast();room=null;qReset();leaveGameUI();show('lobby')});
- sock.on('rd',d=>{if(rjIgnore)return;rjDone();inGame=true;window.endUp=false;M=d.map;names={};d.players.forEach(p=>names[p.pid]=p);if(room&&names[pid]){try{localStorage.lastRoom=room.code}catch(e){}}S=null;lastTick=-1;lastPh='';LB.length=0;lCool=0;lSw=0;aInit=false;$('#ov').classList.add('hide');$('#pz').classList.add('hide');
+ sock.on('rd',d=>{if(rjIgnore)return;rjDone();inGame=true;window.endUp=false;M=d.map;NIGHT=!!d.night;names={};d.players.forEach(p=>names[p.pid]=p);if(room&&names[pid]){try{localStorage.lastRoom=room.code}catch(e){}}S=null;lastTick=-1;lastPh='';LB.length=0;lCool=0;lSw=0;aInit=false;$('#ov').classList.add('hide');$('#pz').classList.add('hide');
   if(!TER||TER.W!==M.W)buildWorld();show('game');fsEnter();resize();AU.bpm=140;musicStart();duck(false);
   $('#hr').textContent=`Round ${d.i+1}/${d.n}`;
   $('#q').innerHTML=`<div>${esc(d.q.question)}</div>`+d.q.options.map((o,i)=>`<div class="o"><b style="background:${FC[i]}">${L[i]}</b><span>${esc(o)}</span></div>`).join('');
-  $('#feed').innerHTML='';banner(`ROUND ${d.i+1}`);sfx('go');
+  $('#feed').innerHTML='';banner(`ROUND ${d.i+1}`);sfx('go');if(NIGHT)setTimeout(()=>toast('🌙 Map ban đêm (khó): có đội cắm cờ là zombie xông về nhà đội đó!'),2600);
   {const u=(d.up||[0,0])[myTeam()]|0;if(u>0&&!isSpec())setTimeout(()=>toast(`⬆️ Đội bạn đã nâng cấp x${u}: +${u} máu tối đa, súng & kiếm mạnh hơn, khiên rộng hơn!`),1300)}});
  sock.on('st',s=>{S=s;for(const p of s.p){const d=disp[p[0]]||(disp[p[0]]={x:p[2],y:p[3]});d.tx=p[2];d.ty=p[3]}
   if(s.ps){PS=s.ps;if(statsOpen())renderStats()}for(const e of s.ev||[]){if(e[0]==='nf'||e[0]==='nk'){feedEv(e);continue}if(e[0]==='pl'&&!isSpec()&&e[3]===myTeam())banner('HÃY BẢO VỆ LÁ CỜ!');if(e[0]==='x')FX.push({x:e[1],y:e[2],t:performance.now()});if((e[0]==='s'||e[0]==='m')&&e[4]===pid&&!isSpec())continue;sfx(e[0],e[1],e[2])}
   if(!aInit&&!isSpec()){const m=s.p.find(q=>q[0]===pid);if(m){inp.a=m[4];aInit=true}}
   const t=Math.max(0,Math.ceil(s.tl));$('#ht').textContent=s.ph==='read'?'📖 Đọc đề '+t:`${Math.floor(t/60)}:${String(t%60).padStart(2,'0')}`;
-  $('#hs').innerHTML=`<span style="color:${TC[0]}">🔵 ${s.tot[0]}${s.kp[0]?` <small>+${s.kp[0]}</small>`:''}</span> <span style="color:${TC[1]}">🔴 ${s.tot[1]}${s.kp[1]?` <small>+${s.kp[1]}</small>`:''}</span>`;
+  const al=t=>{const k=s.f.findIndex(f=>f[3]===t);return k>=0?` <b class="al" style="background:${FC[k]}" title="Đội ${TN[t]} đang cắm đáp án ${L[k]}">${L[k]}</b>`:' <b class="al no" title="Chưa cắm cờ">–</b>'};$('#hs').innerHTML=`<span style="color:${TC[0]}">🔵 ${s.tot[0]}${s.kp[0]?` <small>+${s.kp[0]}</small>`:''}</span>${al(0)} <span style="color:${TC[1]}">🔴 ${s.tot[1]}${s.kp[1]?` <small>+${s.kp[1]}</small>`:''}</span>${al(1)}`;
   if(s.ph!==lastPh){if(s.ph==='play'&&lastPh==='read'){banner('CƯỚP CỜ!');sfx('go')}lastPh=s.ph}
   if(!s.pz&&s.ph!=='result'&&t<=10&&t>0&&t!==lastTick){lastTick=t;sfx('tick')}
   AU.bpm=s.ph==='play'&&s.tl<30?168:140;updPause()});
@@ -322,7 +324,7 @@ function start(V){
  $('#bqc').onclick=()=>{sock.emit('unqueue');qReset()};
  sock.on('qs',d=>{$('#qidle').classList.add('hide');$('#qwait').classList.remove('hide');$('#qtxt').textContent=`Đang tìm trận ${d.size}v${d.size}... ${d.n}/${d.need}`});
  for(const t of [0,1,2])$('#bs'+t).onclick=()=>sock.emit('seat',t);
- const cfg=o=>sock.emit('cfg',o);$('#csize').onchange=e=>cfg({size:+e.target.value});$('#crounds').onchange=e=>cfg({rounds:+e.target.value});
+ const cfg=o=>sock.emit('cfg',o);$('#csize').onchange=e=>cfg({size:+e.target.value});$('#cmap').onchange=e=>cfg({night:e.target.value==='night'});$('#crounds').onchange=e=>cfg({rounds:+e.target.value});
  for(const [i,k] of [['clock','locked'],['ctlock','tlock'],['crnd','rnd'],['clate','late'],['cauto','auto']])$('#'+i).onchange=e=>cfg({[k]:e.target.checked});
  const rename=()=>{if(room&&room.state==='lobby'&&!inGame)sock.emit('rename',{nick:nick()})};$('#nick').addEventListener('change',rename);$('#brn').onclick=rename;
  $('#roomscr').addEventListener('click',e=>{const b=e.target.closest('button[data-a]');if(!b)return;const a=b.dataset.a,p=+b.dataset.p;
@@ -338,12 +340,12 @@ function plRow(p,t,r){const me=p.pid===pid;let h=`${me?'⭐ ':''}${esc(p.nick)}$
  return `<div class="pl${p.aw?' aw':''}">${h}</div>`}
 function drawRoom(){const r=room,host=r.host===pid,lob=r.state==='lobby';$('#bs0').classList.toggle('hide',!!r.eve);$('#bs1').classList.toggle('hide',!!(r.pve||r.eve));$('#t0h').textContent=r.eve?'🤖 Đội Xanh (máy)':'🔵 Đội Xanh';$('#t1h').textContent=(r.pve||r.eve)?'🤖 Đội Đỏ (máy)':'🔴 Đội Đỏ';
  $('#rnote').textContent=(r.eve?'Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Phòng EvE không cần người chơi: máy tự lập hai đội bot, mọi người đều là khán giả.':'Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Mỗi đội cần ít nhất 1 người.')+(r.rnd&&!r.pve&&!r.eve?' 🎲 Khi bắt đầu, mọi người được chia ngẫu nhiên vào hai đội.':'')+(r.tlock&&!r.pve&&!r.eve?' 🔐 Đội đã bị khóa: chỉ chủ phòng chuyển đội được.':'')+(r.auto&&r.ain>=0?` ⏱️ Đủ đội! Tự bắt đầu sau ${r.ain} giây...`:r.auto?' ⏱️ Phòng sẽ tự bắt đầu khi đủ đội.':'');
- $('#rt').textContent=(r.locked?'🚫 ':'')+(r.pw?'🔒 ':'')+r.name+'  #'+r.code;$('#rs').textContent=`${r.pve?'PvE (đấu với máy) · ':''}${r.eve?'EvE (máy đấu máy, demo) · ':''}Chế độ ${r.size}v${r.size} · ${r.rounds} round · mỗi round 3 phút${r.locked?' · phòng đã khóa':''}${r.late?' · cho vào giữa trận':''}`;
+ $('#rt').textContent=(r.locked?'🚫 ':'')+(r.pw?'🔒 ':'')+r.name+'  #'+r.code;$('#rs').textContent=`${r.pve?'PvE (đấu với máy) · ':''}${r.eve?'EvE (máy đấu máy, demo) · ':''}${r.night?'🌙 Ban đêm (khó) · ':''}Chế độ ${r.size}v${r.size} · ${r.rounds} round · mỗi round 3 phút${r.locked?' · phòng đã khóa':''}${r.late?' · cho vào giữa trận':''}`;
  for(const t of [0,1])$('#t'+t).innerHTML=r.teams[t].map(p=>plRow(p,t,r)).join('');
  $('#t2').innerHTML=(r.specs||[]).map(p=>plRow(p,2,r)).join('')||'<small>Chưa có ai</small>';
  const mine=(r.specs||[]).some(p=>p.pid===pid)?2:r.teams[0].some(p=>p.pid===pid)?0:1;for(const t of [0,1,2]){$('#bs'+t).classList.toggle('on',t===mine);$('#bs'+t).disabled=!!(r.tlock&&!host)}
- $('#csize').value=r.size;$('#crounds').value=r.rounds;for(const [i,k] of [['clock','locked'],['ctlock','tlock'],['crnd','rnd'],['clate','late'],['cauto','auto']])$('#'+i).checked=!!r[k];
- for(const i of ['csize','crounds','ctlock','crnd'])$('#'+i).disabled=!host||!lob;for(const i of ['clock','clate','cauto'])$('#'+i).disabled=!host;$('#cautow').classList.toggle('hide',!!r.eve);
+ $('#cmap').value=r.night?'night':'day';$('#csize').value=r.size;$('#crounds').value=r.rounds;for(const [i,k] of [['clock','locked'],['ctlock','tlock'],['crnd','rnd'],['clate','late'],['cauto','auto']])$('#'+i).checked=!!r[k];
+ for(const i of ['csize','crounds','cmap','ctlock','crnd'])$('#'+i).disabled=!host||!lob;for(const i of ['clock','clate','cauto'])$('#'+i).disabled=!host;$('#cautow').classList.toggle('hide',!!r.eve);
  $('#ctlockw').classList.toggle('hide',!!(r.pve||r.eve));$('#crndw').classList.toggle('hide',!!(r.pve||r.eve));$('#clate').closest('label').classList.toggle('hide',!!r.eve);
  $('#rcn').textContent=host?'(bạn là chủ phòng)':'(chỉ chủ phòng chỉnh được)';
  $('#bstart').classList.toggle('hide',!host)}
@@ -456,6 +458,14 @@ let lastT=0;
 function flagIcon(x,y,i,al){ctx.globalAlpha=al;ctx.strokeStyle='#14306b';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x,y+4);ctx.lineTo(x,y-30);ctx.stroke();
  ctx.fillStyle=FC[i];ctx.beginPath();ctx.roundRect(x,y-30,26,18,4);ctx.fill();ctx.lineWidth=2;ctx.stroke();
  ctx.fillStyle='#fff';ctx.font='800 14px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(L[i],x+13,y-20);ctx.globalAlpha=1}
+function nightFx(){const W=cv.width,H=cv.height,spec=isSpec();if(!NC||NC.width!==W||NC.height!==H){NC=document.createElement('canvas');NC.width=W;NC.height=H;NX=NC.getContext('2d')}
+ const g=NX,K=sc*dpr,ox=(cw/2-camx*sc)*dpr,oy=(ch/2-camy*sc)*dpr;g.setTransform(1,0,0,1,0,0);g.globalCompositeOperation='source-over';g.clearRect(0,0,W,H);
+ g.fillStyle=spec&&!spF?'rgba(4,8,30,.55)':'rgba(4,8,30,.84)';g.fillRect(0,0,W,H);g.globalCompositeOperation='destination-out';
+ const hole=(x,y,r,a)=>{const X=x*K+ox,Y=y*K+oy,R=r*K;if(X<-R||Y<-R||X>W+R||Y>H+R)return;const gr=g.createRadialGradient(X,Y,R*.2,X,Y,R);gr.addColorStop(0,`rgba(0,0,0,${a})`);gr.addColorStop(1,'rgba(0,0,0,0)');g.fillStyle=gr;g.beginPath();g.arc(X,Y,R,0,7);g.fill()};
+ for(const p of S.p){const d=disp[p[0]];if(d&&(spec||p[1]===myTeam()))hole(d.x,d.y,p[0]===pid?300:230,1)}
+ (M.bases||[]).forEach(b=>hole(b[0],b[1],M.baseR*1.25,.85));S.f.forEach(f=>{if(f[0]>=0&&f[2]===0)hole(f[0],f[1],110,.8)});
+ for(const m of S.mo||[]){if(m[1]===5){const d=mdisp[m[0]];if(d)hole(d.x,d.y,42,.55)}}
+ ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(NC,0,0);ctx.setTransform(dpr,0,0,dpr,0,0)}
 function frame(t){requestAnimationFrame(frame);const dt=Math.min(.1,(t-lastT)/1000);lastT=t;if(!inGame||!M||!S||!TER)return;
  const k=1-Math.exp(-dt*20);let me=null;for(const p of S.p){const d=disp[p[0]];if(d){if(p[0]===pid){if(p[17]&&p[6]<=0){d.x+=(d.tx-d.x)*k;d.y+=(d.ty-d.y)*k;myEp=-1}else if(p[12]!==myEp||p[6]>0||S.ph!=='play'||S.pz){d.x=d.tx;d.y=d.ty;myEp=p[12]}else predict(d,dt,p[7]>=0,p[13])}else{d.x+=(d.tx-d.x)*k;d.y+=(d.ty-d.y)*k}}if(p[0]===pid){me={x:d.x,y:d.y};updDropBtn()}}
  if(isSpec()&&spF){const d=disp[spF];if(d)me={x:d.x,y:d.y}}
@@ -465,7 +475,7 @@ function frame(t){requestAnimationFrame(frame);const dt=Math.min(.1,(t-lastT)/10
  if(isSpec()&&!spF){camx=M.W/2;camy=M.H/2}readInput(me);localAct(dt,me);ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#17355b';ctx.fillRect(0,0,cw,ch);
  ctx.save();ctx.translate(cw/2-camx*sc,ch/2-camy*sc);ctx.scale(sc,sc);ctx.drawImage(TER,0,0);
  const fl=S.f;
- fl.forEach((f,i)=>{if(f[0]>=0&&f[2]===0){if(f[3]>=0){ctx.strokeStyle=TC[f[3]];ctx.lineWidth=3;ctx.beginPath();ctx.arc(f[0],f[1],17,0,7);ctx.stroke()}ctx.fillStyle='rgba(0,0,0,.25)';ctx.beginPath();ctx.ellipse(f[0],f[1]+4,12,5,0,0,7);ctx.fill();flagIcon(f[0],f[1],i,1)}});
+ fl.forEach((f,i)=>{if(f[0]>=0&&f[2]===0){if(f[3]>=0){ctx.strokeStyle=TC[f[3]];ctx.lineWidth=3;ctx.beginPath();ctx.arc(f[0],f[1],17,0,7);ctx.stroke();const bs=M.bases[f[3]];ctx.save();ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='900 150px sans-serif';ctx.globalAlpha=.3;ctx.fillStyle=FC[i];ctx.fillText(L[i],bs[0],bs[1]);ctx.font='900 46px sans-serif';ctx.globalAlpha=.95;ctx.lineWidth=7;ctx.strokeStyle='#fff';ctx.strokeText(L[i],f[0],f[1]-44);ctx.fillStyle=FC[i];ctx.fillText(L[i],f[0],f[1]-44);ctx.restore()}ctx.fillStyle='rgba(0,0,0,.25)';ctx.beginPath();ctx.ellipse(f[0],f[1]+4,12,5,0,0,7);ctx.fill();flagIcon(f[0],f[1],i,1)}});
  for(const b of S.b){if(b[3]===pid&&!isSpec())continue;ctx.fillStyle=TC[b[2]];ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(b[0],b[1],5+((b[4]||1)-1)*1.5,0,7);ctx.fill();ctx.stroke()}
  for(const b of LB){ctx.fillStyle=TC[myTeam()];ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(b.x,b.y,5+(b.r||0),0,7);ctx.fill();ctx.stroke()}
  drawExtras(dt);
@@ -480,6 +490,7 @@ function frame(t){requestAnimationFrame(frame);const dt=Math.min(.1,(t-lastT)/10
  ctx.globalAlpha=.88;ctx.drawImage(TOP,0,0);ctx.globalAlpha=1;
  if(me){ctx.fillStyle='#fff';ctx.strokeStyle='#14306b';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(me.x,me.y-48);ctx.lineTo(me.x-7,me.y-58);ctx.lineTo(me.x+7,me.y-58);ctx.closePath();ctx.fill();ctx.stroke()}
  ctx.restore();
+ if(NIGHT)nightFx();
  for(const st of [mv,am])if(!ctlOn&&st.id!==null){const v=vec(st,55);ctx.strokeStyle='#ffffffaa';ctx.lineWidth=3;ctx.beginPath();ctx.arc(st.ox,st.oy,55,0,7);ctx.stroke();ctx.fillStyle='#ffffffaa';ctx.beginPath();ctx.arc(st.ox+v[0]*55,st.oy+v[1]*55,22,0,7);ctx.fill()}
  // minimap
  const ms=mm.width/M.W;mctx.drawImage(MMB,0,0);
@@ -613,7 +624,7 @@ addEventListener('keydown',e=>{if(e.code==='KeyE'||e.code==='KeyQ')swapW();if(e.
  if(inGame&&e.target.tagName!=='INPUT'){const m=/^(Digit|Numpad)([123])$/.exec(e.code);if(m)setW(+m[2]-1)}});
 </script>
 <script>
-const FX=[];const mdisp={},MR=[14,12,26,22,16],MH=[3,2,14,25,6];
+const FX=[];const mdisp={},MR=[14,12,26,22,16,15],MH=[3,2,14,25,6,5];
 const lvb=document.createElement('div');lvb.style.cssText='position:fixed;left:10px;top:58px;z-index:5;background:#fff;border:3px solid #14306b;border-radius:12px;padding:3px 10px;font:800 13px sans-serif;min-width:120px;box-shadow:0 3px 0 #14306b';
 lvb.innerHTML='<span></span><div style="height:7px;background:#dde;border-radius:4px;margin-top:3px;overflow:hidden"><i style="display:block;height:100%;width:0;background:#ffb800"></i></div>';
 document.getElementById('tb').parentNode.appendChild(lvb);
@@ -641,6 +652,10 @@ function drawMon(m,d,t){const R=MR[m[1]],x=d.x,y=d.y;ctx.save();ctx.translate(x,
   ctx.fillStyle='#14181f';ctx.fillRect(-1,-13,2,16);ctx.fillRect(-8,-4,16,3);
   ctx.fillStyle=tc;ctx.beginPath();ctx.moveTo(-3,-13);ctx.lineTo(0,-22);ctx.lineTo(3,-13);ctx.closePath();ctx.fill();ctx.stroke();
   ctx.save();ctx.translate(2,-14);ctx.fillStyle='#e8ebf2';ctx.beginPath();ctx.roundRect(-4,-5,8,10,3);ctx.fill();ctx.stroke();ctx.fillStyle=tc;ctx.fillRect(-1.5,-3,3,6);ctx.restore()}
+ else if(m[1]===5){const mvd=Math.hypot(m[2]-d.x,m[3]-d.y);if(mvd>.4)d.fa=Math.atan2(m[3]-d.y,m[2]-d.x);const fa=d.fa||0,sw=Math.sin(t*7+m[0]);ctx.fillStyle='#6f9a5a';ctx.strokeStyle='#243a1d';
+  for(const s of[-1,1]){ctx.save();ctx.rotate(fa);ctx.beginPath();ctx.roundRect(4,s*8-3+sw*s*2,20,6,3);ctx.fill();ctx.stroke();ctx.restore()}
+  ctx.fillStyle='#3d5a8a';ctx.beginPath();ctx.roundRect(-9,-4,18,20,6);ctx.fill();ctx.stroke();ctx.fillStyle='#7fae66';ctx.beginPath();ctx.arc(0,-10,R*.8,0,7);ctx.fill();ctx.stroke();
+  ctx.shadowColor='#ff3b3b';ctx.shadowBlur=8;ctx.fillStyle='#ff4040';for(const e of[-4,4]){ctx.beginPath();ctx.arc(e,-12,2.3,0,7);ctx.fill()}ctx.shadowBlur=0;ctx.beginPath();ctx.moveTo(-4,-4);ctx.lineTo(4,-4);ctx.stroke()}
  else{ctx.fillStyle='#8d8f98';ctx.strokeStyle='#3a3c46';for(const s of[-1,1]){ctx.beginPath();ctx.arc(s*28,6+Math.sin(t*3)*2,10,0,7);ctx.fill();ctx.stroke()}
   ctx.beginPath();ctx.roundRect(-23,-23,46,46,11);ctx.fill();ctx.stroke();ctx.strokeStyle='#5d5f69';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-14,12);ctx.lineTo(-6,4);ctx.lineTo(-10,-4);ctx.moveTo(12,-16);ctx.lineTo(6,-8);ctx.stroke();
   ctx.fillStyle='#ffa31a';ctx.shadowColor='#ff7a00';ctx.shadowBlur=8;ctx.fillRect(-11,-8,8,6);ctx.fillRect(3,-8,8,6);ctx.shadowBlur=0}
@@ -803,6 +818,7 @@ function feedEv(e){
   else if(k===4)feedAdd(`🤖 ${feedNm(e[2])} đang AFK, bot chơi thay`);
   else if(k===5)feedAdd(`✅ ${feedNm(e[2])} đã quay lại, tự điều khiển tiếp`);
   else if(k===6)feedAdd(`🚪 ${feedNm(e[2])} đã rời trận, bot chơi thay`);
+  else if(k===10){feedAdd(`🧟 Zombie đang xông về nhà đội ${TN[e[3]].toLowerCase()}!`);if(!isSpec()&&e[3]===myTeam())banner('ZOMBIE TẤN CÔNG!')}
   else if(k===9)feedAdd(`🆕 ${feedNm(e[2])} đã vào trận giữa chừng`);
   else if(k===7)feedAdd(`⛏️ ${feedNm(e[2])} đã nhổ lá cờ đáp án ${feedFl(e[3])}`);
   else if(k===8)feedAdd(`🔄 ${feedNm(e[2])} đã thay lá cờ đáp án ${feedFl(e[3])} bằng lá ${feedFl(e[4])}, cờ cũ về vị trí ban đầu`);

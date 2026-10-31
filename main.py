@@ -93,6 +93,7 @@ MAXLV = 5
 REJOIN_S = env_num("REJOIN_SECONDS", 90)  # giữ chỗ cho người chơi mất kết nối giữa trận (giây); 0 = tắt
 AFK_S = env_num("AFK_SECONDS", 60)  # đứng yên, không bấm gì quá chừng này giây giữa round thì bot chơi thay tạm thời (bấm lại là lấy lại quyền); 0 = tắt
 MAX_SPECS = env_num("MAX_SPECTATORS", 30)
+ZOMBIE_N = max(0, env_num("ZOMBIE_COUNT", 16))  # map ban đêm: số zombie rải trên bản đồ (chia đều hai nửa đối xứng)
 AUTO_START_S = env_num("AUTO_START_SECONDS", 5)  # đếm ngược trước khi tự bắt đầu khi phòng đủ đội (giây)
 AUTO_AFTER_S = env_num("AUTO_START_AFTER_SECONDS", 20)  # sau khi hết một trận, chờ chừng này giây mới tự bắt đầu trận kế (để kịp xem kết quả)
 HOST_KEEP_S = env_num("HOST_KEEP_SECONDS", 120)  # chủ phòng đóng trang ở phòng chờ: giữ ghế chủ phòng chừng này giây để vào lại; 0 = tắt
@@ -295,6 +296,7 @@ class Room:
         s.pve = pve  # PvE: đội Đỏ (1) là bot do máy điều khiển
         s.eve = eve and not pve  # EvE (demo): cả hai đội đều là bot, mọi người trong phòng (kể cả chủ phòng) chỉ xem
         s.fill = False  # phòng ghép nhanh có lấp chỗ thiếu bằng bot (cả hai đội)
+        s.night = False; s.zrush = ()  # map ban đêm (khó): có zombie; zrush = các đội đã cắm cờ làm zombie xông tới (để báo một lần)
         s.locked = False  # khóa phòng: không ai vào được nữa (người đang ở trong / đang chờ vào lại vẫn giữ chỗ)
         s.tlock = False  # khóa đội: người chơi thường không tự đổi đội được (chủ phòng vẫn đổi/chuyển được)
         s.rnd = False  # chia ngẫu nhiên người chơi vào hai đội mỗi khi chủ phòng bấm Bắt đầu
@@ -332,7 +334,7 @@ def info(r):
     return {"code": r.code, "name": r.name, "size": r.size, "rounds": r.rounds, "pw": bool(r.pw), "state": r.state,
             "pve": r.pve, "eve": r.eve, "max": cap(r), "n": sum(1 for q in r.players.values() if not q.bot), "ns": len(r.specs),
             "host": (r.players.get(r.host) or r.specs.get(r.host) or P(0, "", 0)).pid,
-            "locked": r.locked, "tlock": r.tlock, "rnd": r.rnd, "late": r.late, "auto": r.auto,
+            "night": r.night, "locked": r.locked, "tlock": r.tlock, "rnd": r.rnd, "late": r.late, "auto": r.auto,
             "ain": max(0, int(math.ceil(r.auto_at - time.time()))) if r.auto_at else -1,
             "teams": [[{"pid": p.pid, "nick": p.nick, "aw": int(p.away)} for p in r.players.values() if p.team == t and not p.bot] for t in (0, 1)],
             "specs": [{"pid": p.pid, "nick": p.nick, "aw": int(p.away)} for p in r.specs.values()]}
@@ -494,7 +496,7 @@ def late_join(r, sid, nick, slot):
 
 def rd_payload(r):
     return {"i": r.round, "n": r.rounds, "q": {"question": r.q["question"], "options": r.q["options"]},
-            "players": roster(r), "map": MAPINFO, "up": list(r.up)}
+            "players": roster(r), "map": MAPINFO, "night": r.night, "up": list(r.up)}
 
 
 @sio.on("join")
@@ -530,7 +532,7 @@ def on_join(d):
         emit("me", {"pid": p.pid}); push(r)
         if r.state == "playing" and r.q:
             emit("rd", {"i": r.round, "n": r.rounds, "q": {"question": r.q["question"], "options": r.q["options"]},
-                        "players": roster(r), "map": MAPINFO})
+                        "players": roster(r), "map": MAPINFO, "night": r.night})
 
 
 @sio.on("leave")
@@ -692,12 +694,14 @@ def on_cfg(d):
             r.auto = bool(d["auto"]) and not r.fill
             if not r.auto:
                 r.auto_at = None
-        if any(k in d for k in ("size", "rounds", "tlock", "rnd")):
+        if any(k in d for k in ("size", "rounds", "tlock", "rnd", "night")):
             if r.state != "lobby":
-                emit("err", "Số người mỗi đội, số round, khóa đội và chia đội ngẫu nhiên chỉ đổi được ở phòng chờ.")
+                emit("err", "Bản đồ, số người mỗi đội, số round, khóa đội và chia đội ngẫu nhiên chỉ đổi được ở phòng chờ.")
             else:
                 if "tlock" in d:
                     r.tlock = bool(d["tlock"])
+                if "night" in d:
+                    r.night = bool(d["night"])
                 if "rnd" in d:
                     r.rnd = bool(d["rnd"]) and not (r.pve or r.eve)
                 if "rounds" in d:
@@ -1242,7 +1246,7 @@ def bot_ai(r, p):
         for mo in r.mons:
             if not mo["alive"] or mo["t"] == 4:
                 continue
-            R = (90, 90, 190, 200)[mo["t"]] + mo["r"]
+            R = (90, 90, 190, 200, 0, 80)[mo["t"]] + mo["r"]
             mdx, mdy = p.x - mo["x"], p.y - mo["y"]; md = math.hypot(mdx, mdy)
             if 1e-3 < md < R and math.hypot(dest[0] - mo["x"], dest[1] - mo["y"]) > R:  # đích nằm sát quái thì thôi (vd. cờ có thần giữ)
                 w = (R - md) / R
@@ -1359,7 +1363,8 @@ MON = {0: dict(hp=3, sp=70, r=14, dmg=1, pts=10, exp=(1, 2), heal=0.12, rt=25), 
        1: dict(hp=2, sp=120, r=12, dmg=1, pts=15, exp=(1, 3), heal=0.12, rt=25),   # dơi
        2: dict(hp=14, sp=45, r=26, dmg=2, pts=60, exp=(5, 8), heal=1.0, rt=45),    # golem (trùm giữa bản đồ)
        3: dict(hp=25, sp=GUARD_SP, r=GUARD_R, dmg=2, pts=80, exp=(6, 9), heal=1.0, rt=45),  # thần giữ cờ: đi dạo quanh cờ, bắn laze, bị bắn thì đuổi
-       4: dict(hp=6, sp=110, r=16, dmg=1, pts=25, exp=(3, 5), heal=0.3, rt=0)}  # hiệp sĩ canh căn cứ của một đội (chết là mất hẳn trong round, không hồi sinh)
+       4: dict(hp=6, sp=110, r=16, dmg=1, pts=25, exp=(3, 5), heal=0.3, rt=0),
+       5: dict(hp=5, sp=85, r=14, dmg=1, pts=15, exp=(1, 3), heal=0.1, rt=30)}  # zombie (chỉ map ban đêm): lang thang, đuổi người; có đội cắm cờ thì cả bầy xông về nhà đội đó  # hiệp sĩ canh căn cứ của một đội (chết là mất hẳn trong round, không hồi sinh)
 
 KNIGHT_N, KNIGHT_RING = 5, 100.0                   # số hiệp sĩ mỗi đội, bán kính vòng tuần tra quanh căn cứ
 KNIGHT_SEE = BASE_R + 170.0                        # địch vào trong tầm này (tính từ tâm căn cứ) thì hiệp sĩ lao ra chặn
@@ -1408,6 +1413,12 @@ def make_mons(r):
         x, y = W / 2 + random.uniform(-160, 160), H / 2 + random.uniform(-160, 160)
         if free(x, y, 26):
             add(2, x, y); break
+    if r.night:  # map ban đêm: zombie rải đối xứng khắp bản đồ
+        for _ in range(ZOMBIE_N // 2):
+            for _ in range(80):
+                x, y = random.uniform(0.1, 0.9) * W, random.uniform(0.1, 0.9) * H
+                if free(x, y, 14) and free(W - x, H - y, 14):
+                    add(5, x, y); add(5, W - x, H - y); break
     for f in r.flags:  # mỗi lá cờ có một thần giữ cờ đứng cạnh
         for _ in range(40):
             a = random.uniform(0, 6.283); x, y = f["x"] + math.cos(a) * 85, f["y"] + math.sin(a) * 85
@@ -1623,7 +1634,41 @@ def knight_step(r, mo, c):
     return None, 1e9
 
 
+def zombie_step(r, mo, c):
+    """Zombie: bình thường lang thang quanh chỗ xuất hiện, thấy người trong 330px thì đuổi. Khi có đội đã cắm cờ thì cả bầy xông về
+    căn cứ của đội đó (đi vòng tường bằng A*), chỉ dừng lại đánh người trong 220px; tới nhà thì quanh quẩn đánh ai ở đó."""
+    rush = [t for t in (0, 1) if any(f["planted"] == t for f in r.flags)]
+    tg, bd = None, (220.0 if rush else 330.0)
+    for p in r.players.values():
+        d = math.hypot(p.x - mo["x"], p.y - mo["y"])
+        if p.down <= 0 and d < bd and (rush or math.hypot(p.x - mo["hx"], p.y - mo["hy"]) < 520):
+            tg, bd = p, d
+    if tg:
+        mon_move(mo, tg.x, tg.y, c["sp"] * 1.1 * DT / DT, 4.0)
+        return tg, bd
+    if rush:
+        bx, by = min((BASES[t] for t in rush), key=lambda b: math.hypot(b[0] - mo["x"], b[1] - mo["y"]))
+        if math.hypot(bx - mo["x"], by - mo["y"]) > BASE_R * 0.55:
+            ai = mo.setdefault("ai", new_ai())
+            wx, wy = nav_steer(ai, mo["x"], mo["y"], bx, by, time.time())
+            mon_move(mo, wx, wy, c["sp"] * 1.15, 4.0)
+            return None, 300.0
+    now = time.time()  # lang thang quanh điểm mốc (chỗ xuất hiện, hoặc quanh nhà địch khi đã tới nơi)
+    ox, oy = (bx, by) if rush else (mo["hx"], mo["hy"])
+    if now >= mo["ws"]:
+        a = random.uniform(0, 6.283); rr = random.uniform(10, BASE_R * 0.5 if rush else 90)
+        mo["wx"], mo["wy"] = ox + math.cos(a) * rr, oy + math.sin(a) * rr; mo["ws"] = now + random.uniform(1.5, 3.5)
+    mon_move(mo, mo["wx"], mo["wy"], c["sp"] * 0.6, 6.0)
+    return None, 300.0
+
+
 def mon_step(r):
+    if r.night:  # có đội vừa cắm cờ: báo cho mọi người biết zombie đang xông về nhà đội đó
+        rush = tuple(t for t in (0, 1) if any(f["planted"] == t for f in r.flags))
+        for t in rush:
+            if t not in r.zrush:
+                r.ev.append(["nf", 10, 0, t, -1])
+        r.zrush = rush
     for mo in r.mons:
         if not mo["alive"]:
             if mo["t"] == 4:
@@ -1648,6 +1693,8 @@ def mon_step(r):
             tg, bd = guard_step(r, mo, c)
         elif mo["t"] == 4:
             tg, bd = knight_step(r, mo, c)
+        elif mo["t"] == 5:
+            tg, bd = zombie_step(r, mo, c)
         else:
             tg, bd = None, 300.0
             for p in r.players.values():
@@ -1690,8 +1737,8 @@ def orb_step(r):
 
 
 KB_DIST, KB_T = 110.0, 0.22   # kiếm: đánh bật lùi người chơi 110px trong 0.22s (đồng thời ngắt hành động)
-KB_MON = {0: 120.0, 1: 140.0, 2: 40.0, 3: 60.0, 4: 70.0}   # quãng bật lùi theo loại quái (golem nặng nên ít lùi)
-KB_STUN = {0: 0.6, 1: 0.6, 2: 0.35, 3: 0.5, 4: 0.4}       # thời gian quái bị choáng (không đi, không đánh, không nạp laze)
+KB_MON = {0: 120.0, 1: 140.0, 2: 40.0, 3: 60.0, 4: 70.0, 5: 100.0}   # quãng bật lùi theo loại quái (golem nặng nên ít lùi)
+KB_STUN = {0: 0.6, 1: 0.6, 2: 0.35, 3: 0.5, 4: 0.4, 5: 0.5}       # thời gian quái bị choáng (không đi, không đánh, không nạp laze)
 
 
 def knock_player(r, q, src):
@@ -2202,13 +2249,13 @@ def play_round(r, i):
         r.rkp = [{"x": a * T, "y": b * T, "t": 0.0} for a, b in RK_SPOTS_T]
         r.flags = [{"x": spots[k][0] * T, "y": spots[k][1] * T, "c": None, "planted": -1, "slot": 0, "letter": k,
                     "hx": spots[k][0] * T, "hy": spots[k][1] * T} for k in range(n)]
-        r.unp = [0, 0]
+        r.unp = [0, 0]; r.zrush = ()
         for p in r.players.values():
             p.up = r.up[p.team] if p.team in (0, 1) else 0
             p.reset(); spawn(r, p)
         make_mons(r)
         sio.emit("rd", {"i": i, "n": r.rounds, "q": {"question": q["question"], "options": q["options"]},
-                        "players": roster(r), "map": MAPINFO, "up": list(r.up)}, to=r.code)
+                        "players": roster(r), "map": MAPINFO, "night": r.night, "up": list(r.up)}, to=r.code)
     if not wait(r, READ_S, False, "read"):
         return False
     if not wait(r, PLAY_S, True, "play"):

@@ -107,6 +107,8 @@ Chỉ số nằm ở bảng `CHARS` đầu `main.py` (máu cộng thêm, hệ s�
 
 - Máy tính: `W A S D` hoặc phím mũi tên để di chuyển, chuột để ngắm, `Space` hoặc bấm chuột trái để tấn công, phím **`1`** súng bong bóng, **`2`** kiếm gỗ, **`3`** súng tên lửa (`E` / `Q` đổi vũ khí lần lượt), **giữ chuột phải hoặc `Shift` để giơ khiên** (khi cầm kiếm), `G` để thả cờ / nhổ cờ nhà (khi đứng cạnh cờ đã cắm), `P` hoặc `Esc` để tạm dừng, `M` để tắt/bật âm thanh, bấm thanh điểm để xem thống kê (`Esc` để đóng).
 - Điện thoại: cần trái để di chuyển, cần phải để ngắm và tự bắn, nút **1** 🔫 / **2** 🗡️ / **3** 🚀 (hiện số đạn) để chọn vũ khí, nút 🛡️ (kéo/giữ) để giơ khiên, nút 🏳️ để thả cờ (khi vác cờ) và đổi thành ⛏️ để nhổ cờ khi đứng gần lá cờ nhà đã cắm. Nên xoay ngang màn hình. Vị trí các nút có thể kéo chỉnh trong game.
+- **Đáp án đã cắm:** thanh điểm giữa phía trên màn hình hiện chữ cái (A/B/C/D, đúng màu lá cờ) ngay sau điểm của mỗi đội đang cắm cờ, `–` nếu đội chưa cắm. Ở sân nhà mỗi đội có chữ cái lớn mờ trên nền đất, cộng thêm chữ nổi ngay phía trên lá cờ đã cắm, ai cũng thấy được.
+- **Map ban đêm 🌙 (khó):** chủ phòng chọn ở mục Bản đồ trong Cài đặt phòng (chỉ đổi được ở phòng chờ). Màn hình tối, chỉ sáng quanh đồng đội, căn cứ và cờ đã cắm. Có `ZOMBIE_COUNT` zombie (mặc định 16, rải đối xứng) lang thang và đuổi người ở gần. **Khi có đội cắm cờ, cả bầy xông về nhà đội đó** (đi vòng tường, chỉ dừng đánh người trong tầm gần), bảng tin báo và đội bị tấn công thấy chữ "ZOMBIE TẤN CÔNG!". Zombie 5 máu, hạ được cho điểm và EXP, hồi sinh sau 30 giây. Bản đồ dùng cùng địa hình với ban ngày.
 - Chủ phòng 👑 là người duy nhất bấm Bắt đầu và Tạm dừng.
 - **Phòng chờ:** ai cũng đổi được **tên** (mục ✏️, bấm *Áp dụng tên mới*) và chọn **nhân vật** ngay trong phòng chờ. Chủ phòng 👑 có thêm mục **⚙️ Cài đặt phòng** và các nút cạnh tên từng người:
   - **Đổi chế độ 1v1 … 5v5** và số round, miễn là không đội nào đang đông hơn cỡ mới (nếu không sẽ báo lỗi và giữ nguyên).
@@ -168,6 +170,7 @@ cp .env.example .env
 | `REJOIN_SECONDS` | `90` | Giữ chỗ cho người mất kết nối giữa trận (giây), `0` = tắt |
 | `AUTO_START_SECONDS` | `5` | Đếm ngược trước khi tự bắt đầu khi phòng đủ đội |
 | `AUTO_START_AFTER_SECONDS` | `20` | Sau khi hết trận, chờ chừng này giây mới tự bắt đầu trận kế |
+| `ZOMBIE_COUNT` | `16` | Số zombie trên map ban đêm (`0` = không có) |
 | `HOST_KEEP_SECONDS` | `120` | Giữ ghế chủ phòng khi chủ phòng đóng trang ở phòng chờ (giây), `0` = tắt |
 | `READ_SECONDS` | `10` | Thời gian đọc đề |
 | `PLAY_SECONDS` | `170` | Thời gian tranh cờ |
