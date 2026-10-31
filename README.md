@@ -22,7 +22,7 @@ Dùng để trình diễn game mà không cần người chơi. Khi tạo phòng
 | Nhân vật | 10 nhân vật động vật, chọn ở sảnh (xem bảng bên dưới) |
 | Áo | Đội Xanh áo xanh, đội Đỏ áo đỏ |
 | 🔫 Súng bong bóng nước | Bắn xa, đạn bay thẳng, 1 sát thương, hồi 0.32 giây. Có **tự ngắm**: đạn hút nhẹ về địch/quái gần tâm ngắm nhất, trong tầm và không bị tường chắn |
-| 🗡️ Kiếm nhựa trẻ em | Chém hình quạt tầm gần (58 px), **2 sát thương**, hồi 0.55 giây. Trúng thì **đẩy lùi** và làm địch choáng, ngắt hành động của họ |
+| 🗡️ Kiếm nhựa trẻ em | Chém hình quạt tầm gần (58 px), **2 sát thương**, hồi 0.55 giây. Trúng thì **đẩy lùi** và làm địch choáng, ngắt hành động của họ. **Aimlock:** có địch (người, quái, hiệp sĩ, thần giữ cờ) trong ~130 px (`SWORD_LOCK_R`) và không bị tường chắn thì nhát chém tự quay về phía địch gần nhất; nếu địch hơi xa tầm kiếm, nhân vật **lao vào** (0.15 giây) rồi chém ngay. Người núp bụi cỏ không bị khoá; bị đánh bật lùi thì mất đà lao |
 | 🚀 Súng tên lửa (mới) | Nhặt trên bản đồ, được **3 quả**. Tên lửa **tự dẫn** tới địch/quái gần nhất trong 460 px (không dò được người đang núp bụi cỏ), nổ lan bán kính 62 px, **3 sát thương**, hồi 0.8 giây. Tường chặn được tên lửa, khiên chặn được vụ nổ từ phía trước |
 | 🛡️ Khiên | Chỉ dùng khi cầm kiếm. Giơ khiên chặn được đòn (đạn, kiếm, laze, quái) đến từ phía trước trong khoảng ±66°, nhưng đi chậm còn 60% |
 

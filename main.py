@@ -151,6 +151,8 @@ UP_MAX = min(3, env_num("UPGRADE_MAX", 3))                     # số lần nân
 GUN_DMG = [1, 2, 2, 3]                                 # sát thương súng bong bóng theo cấp nâng cấp của đội
 SWORD_DMG_UP = [2, 3, 3, 4]                            # sát thương kiếm theo cấp nâng cấp
 SHIELD_ARC_UP = 0.12                                   # khiên rộng thêm mỗi cấp (rad)
+SWORD_LOCK_R = env_num("SWORD_LOCK_R", 130.0)          # kiếm aimlock: địch (mép) trong bán kính này thì chém sẽ tự khoá hướng và lao vào
+SWORD_DASH_T = 0.15                                    # thời gian lao vào địch trước khi chém (3 tick)
 
 # ---------- bản đồ: đối xứng tâm (xoay 180 độ) ----------
 def sym(r):
@@ -287,6 +289,7 @@ class P:
         s.lv = 1; s.exp = 0; s.mhp = HP + s.up + CHARS[s.g][1]; s.hp = s.mhp; s.rk = 0
         s.sw = 0.0; s.dx = s.dy = 0.0; s.fire = False; s.fl = False; s.sh = False; s.carry = -1; s.prog = 0.0; s.pf = -1
         s.kbt = 0.0; s.kvx = s.kvy = 0.0  # kbt: thời gian còn bị bật lùi
+        s.dsh = 0.0; s.dvx = s.dvy = 0.0; s.dgo = False; s.lkt = 0.0  # kiếm aimlock - dsh: còn lao vào địch; dgo: lao xong thì chém; lkt: còn khoá hướng
         s.un = -1  # chỉ số lá cờ nhà đang nhổ (-1 = không nhổ)
 
 
@@ -999,13 +1002,15 @@ def on_inp(d):
         p.cw = neww
         if p.auto:
             return  # bot đang chơi thay: bỏ qua input/vị trí client cho tới khi người chơi thao tác lại
-        p.dx, p.dy, p.a, p.fire = dx, dy, a, bool(d.get("f"))
+        p.dx, p.dy, p.fire = dx, dy, bool(d.get("f"))
+        if p.lkt <= 0 and p.dsh <= 0:
+            p.a = a  # đang khoá hướng kiếm (aimlock) thì giữ hướng do máy chủ chọn
         if p.fire and r.phase == "play" and p.down <= 0:
             p.fl = True  # chốt cú bấm ngắn: nhấn+thả giữa 2 tick vẫn tính 1 phát (khớp với đạn client đã hiện)
         p.w = d.get("w") if d.get("w") in (1, 2) else 0
         p.sh = bool(d.get("sh")) and p.w == 1  # giữ khiên (chỉ khi cầm kiếm)
         # Client tự dự đoán vị trí (không giật khi ping cao); máy chủ chỉ kiểm tra có hợp lệ không
-        if "x" in d and d.get("ep") == p.ep and p.down <= 0 and p.kbt <= 0 and r.phase == "play" and not r.paused:
+        if "x" in d and d.get("ep") == p.ep and p.down <= 0 and p.kbt <= 0 and p.dsh <= 0 and r.phase == "play" and not r.paused:
             nx, ny, now = float(d["x"]), float(d["y"]), time.time()
             dt = min(max(now - p.tpos, 0.05), 2.0) if p.tpos else 0.15
             if math.hypot(nx - p.x, ny - p.y) <= SPEED * 1.3 * dt + 12 and not hit_wall(nx, ny, PR):
@@ -1747,7 +1752,27 @@ def knock_player(r, q, src):
     a = math.atan2(q.y - src.y, q.x - src.x) if d > 1 else src.a
     q.kbt = KB_T; q.kvx = math.cos(a) * KB_DIST / KB_T; q.kvy = math.sin(a) * KB_DIST / KB_T
     q.sw = 0.0; q.fl = False; q.prog = 0.0; q.pf = -1; q.un = -1; q.cool = max(q.cool, 0.2)
+    q.dsh = 0.0; q.dgo = False; q.lkt = 0.0  # bị đánh bật thì mất đà lao / khoá hướng
     q.ep += 1  # client bỏ vị trí tự dự đoán, theo máy chủ trong lúc bị bật lùi
+
+
+def sword_lock(r, p):
+    """Kiếm aimlock: tìm địch gần nhất (người chơi, quái, hiệp sĩ, thần giữ cờ) có mép trong SWORD_LOCK_R và không bị tường chắn.
+    Người đang núp bụi cỏ thì không khoá được. Trả về (x, y, bán kính) hoặc None."""
+    best, bd = None, 1e9
+    for q in r.players.values():
+        if q.team == p.team or q.team not in (0, 1) or q.down > 0 or in_bush(q.x, q.y):
+            continue
+        dd = math.hypot(q.x - p.x, q.y - p.y)
+        if dd < bd and dd - PR <= SWORD_LOCK_R and clear_shot(p.x, p.y, q.x, q.y):
+            best, bd = (q.x, q.y, PR), dd
+    for mo in r.mons:
+        if not mo["alive"] or friendly(mo, p.team):
+            continue
+        dd = math.hypot(mo["x"] - p.x, mo["y"] - p.y)
+        if dd < bd and dd - mo["r"] <= SWORD_LOCK_R and clear_shot(p.x, p.y, mo["x"], mo["y"]):
+            best, bd = (mo["x"], mo["y"], mo["r"]), dd
+    return best
 
 
 def knock_mon(mo, sx, sy):
@@ -1923,7 +1948,7 @@ def step(r, live):
     for p in r.players.values():
         if p.down > 0:
             p.act = time.time()  # đang bị đóng băng thì chưa tính AFK
-            p.down -= DT; p.fl = False; p.kbt = 0.0
+            p.down -= DT; p.fl = False; p.kbt = 0.0; p.dsh = 0.0; p.dgo = False; p.lkt = 0.0
             if p.down <= 0:
                 p.hp = p.mhp; p.down = 0; spawn(r, p)
             continue
@@ -1939,6 +1964,15 @@ def step(r, live):
             if p.kbt <= 0:
                 p.kbt = 0.0; p.ep += 1; p.tpos = time.time()
             continue
+        if p.dsh > 0:  # kiếm aimlock: đang lao vào địch (máy chủ tự di chuyển, client bám theo), lao xong thì chém ngay
+            nx = p.x + p.dvx * DT
+            if not hit_wall(nx, p.y, PR): p.x = nx
+            ny = p.y + p.dvy * DT
+            if not hit_wall(p.x, ny, PR): p.y = ny
+            p.dsh -= DT; p.fl = False; p.lkt = max(p.lkt, SWORD_T)
+            if p.dsh > DT * 0.5:
+                continue
+            p.dsh = 0.0; p.dgo = True; p.ep += 1; p.tpos = time.time()
         if p.prog > 0:
             p.act = time.time()  # đang đứng cắm/cướp cờ (phải đứng yên) thì không phải AFK
         if AFK_S > 0 and not p.bot and not p.away and not p.auto and p.team in (0, 1) and time.time() - p.act > AFK_S:
@@ -1955,8 +1989,18 @@ def step(r, live):
             if not hit_wall(p.x, ny, PR): p.y = ny
         p.cool -= DT
         p.sw -= DT
-        fire = p.fire or p.fl; p.fl = False
+        p.lkt -= DT
+        dgo = p.dgo and p.w == 1; p.dgo = False  # vừa lao xong: chém luôn (bỏ qua việc nút đã thả)
+        fire = p.fire or p.fl or dgo; p.fl = False
         if fire and p.cool <= 0 and p.w == 1 and not shielding(p):
+            tg = sword_lock(r, p)
+            if tg:  # aimlock: quay mặt về địch gần nhất; địch hơi xa thì lao vào trước rồi mới chém
+                ang = math.atan2(tg[1] - p.y, tg[0] - p.x); dd = math.hypot(tg[0] - p.x, tg[1] - p.y)
+                p.a = ang; p.lkt = SWORD_T
+                if not dgo and dd > tg[2] + PR + 22:
+                    run = (dd - (tg[2] + PR + 8)) / SWORD_DASH_T
+                    p.dsh = SWORD_DASH_T; p.dvx = math.cos(ang) * run; p.dvy = math.sin(ang) * run
+                    continue
             p.cool, p.sw = SWORD_COOL, SWORD_T
             r.ev.append(["m", round(p.x), round(p.y), p.team, p.pid])
             for mo in r.mons:
@@ -2165,7 +2209,7 @@ def send_state(r):
                or any(math.hypot(p.x - s.x, p.y - s.y) < SEE_R for s in seers)]
         ids = {p.pid for p in vis}
         st = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused,
-              "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk] for p in vis],
+              "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk, 1 if p.dsh > 0 else (2 if p.lkt > 0 else 0)] for p in vis],
               "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] if (not f["c"] or f["c"].pid in ids)
                     else [-1, -1, f["c"].pid, -1] for f in r.flags],
               "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp, "un": r.unp, "um": UNPLANT_MAX,
@@ -2180,7 +2224,7 @@ def send_state(r):
     if r.specs:
         everyone = list(r.players.values())
         full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1,
-                "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk] for p in everyone],
+                "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk, 1 if p.dsh > 0 else (2 if p.lkt > 0 else 0)] for p in everyone],
                 "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] for f in r.flags],
                 "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp, "un": r.unp, "um": UNPLANT_MAX,
               "rk": [[round(k["x"]), round(k["y"]), round(k["a"], 2), k["t"], k["o"].pid] for k in r.rockets],
