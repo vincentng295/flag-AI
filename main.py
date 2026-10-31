@@ -116,6 +116,16 @@ CHARS = [
     ("Đại Bàng Thiện Xạ", 0, 1.03, 0.85),
 ]
 NCH = len(CHARS)
+# ---------- Nộ & tuyệt chiêu (mỗi nhân vật 1 chiêu, bấm R / nút 🔥 khi đầy nộ) ----------
+# 0 Cáo Bão Cáo Lửa | 1 Gấu Nổi Giận | 2 Thỏ Ba Cú Nhảy | 3 Cú Soi Sáng | 4 Voi Giậm Đất
+# 5 Cánh Cụt Bão Tuyết | 6 Mèo Ảnh Sát | 7 Hổ Gầm | 8 Ếch Lưỡi Thần | 9 Đại Bàng Xuyên Tâm
+RAGE_MAX = 100.0
+SHIELD_HP, SHIELD_REGEN = 5.0, 10.0   # khiên (dùng được với cả 3 vũ khí): 5 máu, hồi 1 máu mỗi 10 giây; mỗi đòn chặn trừ máu khiên bằng sát thương
+RAGE_DEAL, RAGE_HURT, RAGE_KILL, RAGE_FLAG = 4.0, 6.0, 25.0, 10.0   # nộ nhận khi: gây 1 máu / mất 1 máu / hạ người / cắm-cướp cờ
+ULT_ATK = {1, 4, 6, 7, 8, 9}        # chiêu tấn công: không dùng khi đang vác cờ (Cáo, Thỏ, Cú, Cánh Cụt thì được)
+HOP_D, HOP_T = 150.0, 0.2           # Thỏ: quãng / thời gian mỗi cú nhảy
+SHOCK_R, SNOW_R, ROAR_R = 130.0, 140.0, 180.0
+FROG_L, EAGLE_L, EAGLE_DMG, EAGLE_CH = 320.0, 700.0, 3, 0.6
 SID_G = {}  # sid -> nhân vật đã chọn ở sảnh (gửi bằng sự kiện "char", có trước khi vào phòng)
 
 
@@ -291,6 +301,11 @@ class P:
         s.kbt = 0.0; s.kvx = s.kvy = 0.0  # kbt: thời gian còn bị bật lùi
         s.dsh = 0.0; s.dvx = s.dvy = 0.0; s.dgo = False; s.lkt = 0.0  # kiếm aimlock - dsh: còn lao vào địch; dgo: lao xong thì chém; lkt: còn khoá hướng
         s.un = -1  # chỉ số lá cờ nhà đang nhổ (-1 = không nhổ)
+        s.rage = 0.0; s.ut = 0.0; s.ur = False  # nộ (0..100) / thời gian còn lại của tuyệt chiêu / yêu cầu bấm chiêu
+        s.ch = 0.0; s.ca = 0.0; s.hopn = 0; s.hop = False; s.inv = 0.0  # Đại Bàng đang ngắm (ch) + hướng khoá (ca); Thỏ: số cú nhảy còn lại, bất tử
+        s.slw = 0.0; s.slk = 1.0; s.zb = 0.0; s.fz = 0.0  # bị làm chậm (thời gian, hệ số) / đứng trên băng đồng đội / tích luỹ đóng băng
+        s.shp = SHIELD_HP  # máu khiên
+        s.bs = False; s.hc = 0; s.ux = s.uy = 0.0  # Mèo sẵn sàng đánh úp / Hổ đếm đòn hút máu / tâm vùng Bão Tuyết
 
 
 class Room:
@@ -980,6 +995,18 @@ def on_chat(d):
                     _emit_safe("chat", msg, q.sid)
 
 
+@sio.on("ult")
+def on_ult(d=None):
+    r = SID_ROOM.get(request.sid)
+    p = r.players.get(request.sid) if r else None
+    if not p or p.team not in (0, 1):
+        return
+    p.act = time.time()
+    if p.auto:
+        set_auto(r, p, False)  # bấm chiêu = lấy lại quyền từ bot
+    p.ur = True
+
+
 @sio.on("inp")
 def on_inp(d):
     r = SID_ROOM.get(request.sid)
@@ -1008,12 +1035,12 @@ def on_inp(d):
         if p.fire and r.phase == "play" and p.down <= 0:
             p.fl = True  # chốt cú bấm ngắn: nhấn+thả giữa 2 tick vẫn tính 1 phát (khớp với đạn client đã hiện)
         p.w = d.get("w") if d.get("w") in (1, 2) else 0
-        p.sh = bool(d.get("sh")) and p.w == 1  # giữ khiên (chỉ khi cầm kiếm)
+        p.sh = bool(d.get("sh"))  # giữ khiên (dùng được với cả súng, kiếm, tên lửa)
         # Client tự dự đoán vị trí (không giật khi ping cao); máy chủ chỉ kiểm tra có hợp lệ không
         if "x" in d and d.get("ep") == p.ep and p.down <= 0 and p.kbt <= 0 and p.dsh <= 0 and r.phase == "play" and not r.paused:
             nx, ny, now = float(d["x"]), float(d["y"]), time.time()
             dt = min(max(now - p.tpos, 0.05), 2.0) if p.tpos else 0.15
-            if math.hypot(nx - p.x, ny - p.y) <= SPEED * 1.3 * dt + 12 and not hit_wall(nx, ny, PR):
+            if math.hypot(nx - p.x, ny - p.y) <= SPEED * 1.3 * max(1.0, speed_mult(p)) * dt + 12 and not hit_wall(nx, ny, PR):
                 p.x, p.y, p.tpos = nx, ny, now
             else:
                 p.ep += 1; p.tpos = time.time() + 2.0  # quá nhanh hoặc xuyên tường: kéo client về vị trí máy chủ
@@ -1359,7 +1386,7 @@ def drop_flag(r, p):
 
 def take(r, p, k, f):
     was = f["planted"]  # >= 0: lá cờ đang cắm ở căn cứ của đội đó (bị cướp)
-    p.carry = k; f["c"] = p; f["planted"] = -1; p.prog = 0.0; p.pf = -1
+    p.carry = k; f["c"] = p; f["planted"] = -1; p.prog = 0.0; p.pf = -1; add_rage(p, RAGE_FLAG)
     r.ev.append(["p", round(p.x), round(p.y), p.team])
     r.ev.append(["nf", 1 if was >= 0 else 0, p.pid, f["letter"], was])
 
@@ -1474,6 +1501,66 @@ def team_has_flag(r, team):
     return any(f["planted"] == team or (f["c"] is not None and f["c"].team == team) for f in r.flags)
 
 
+def add_rage(p, v):
+    if isinstance(p, P) and p.team in (0, 1):
+        p.rage = min(RAGE_MAX, p.rage + v)
+
+
+def owl_on(r, team):
+    """Đội có Cú đang bật Mắt Cú Soi Sáng: thấy hết địch (kể cả núp bụi), đánh địch +1 sát thương, tên lửa dò được người trong bụi."""
+    return any(q.team == team and q.g == 3 and q.ut > 0 and q.down <= 0 for q in r.players.values())
+
+
+def speed_mult(p):
+    """Hệ số tốc độ do tuyệt chiêu/làm chậm (client dùng để dự đoán di chuyển, nên được gửi kèm trạng thái)."""
+    m = 1.0
+    if p.ut > 0:
+        if p.g == 0: m *= 1.25 if p.carry >= 0 else 1.40
+        elif p.g == 2: m *= 1.15
+        elif p.g == 7: m *= 1.08
+    if p.slw > 0: m *= p.slk
+    if p.zb > 0: m *= 1.15
+    return m
+
+
+def slow(q, secs, k):
+    q.slk = min(q.slk, k) if q.slw > 0 else k
+    q.slw = max(q.slw, secs)
+
+
+def stun(q, secs):
+    """Choáng đứng yên (không đi, không đánh). Gấu đang nổi giận và Thỏ đang nhảy miễn nhiễm."""
+    if (q.g == 1 and q.ut > 0) or q.inv > 0 or q.down > 0:
+        return
+    q.kbt = max(q.kbt, secs); q.kvx = q.kvy = 0.0
+    q.sw = 0.0; q.fl = False; q.prog = 0.0; q.pf = -1; q.un = -1; q.cool = max(q.cool, 0.2)
+    q.dsh = 0.0; q.dgo = False; q.lkt = 0.0; q.ch = 0.0; q.ep += 1
+
+
+def dmg_calc(r, q, d, src=None):
+    """Sát thương q thật sự nhận: Thỏ nhảy bất tử, Gấu giảm nửa, Mèo đánh úp +2, đội có Cú +1, Hổ hút máu; cộng nộ cho hai bên."""
+    if not isinstance(src, P):
+        src = None
+    if q.inv > 0:
+        return 0
+    if src is not None:
+        if src.g == 6 and src.ut > 0 and src.bs:
+            d += 2; src.bs = False; src.ut = 0.0
+        if owl_on(r, src.team):
+            d += 1
+    if q.g == 1 and q.ut > 0:
+        d = (d + 1) // 2
+    if d > 0:
+        add_rage(q, RAGE_HURT * d)
+        if src is not None:
+            add_rage(src, RAGE_DEAL * d)
+            if src.g == 7 and src.ut > 0:
+                src.hc += 1
+                if src.hc >= 2:
+                    src.hc = 0; src.hp = min(src.mhp, src.hp + 1)
+    return d
+
+
 def defeat(r, victim, killer=None):
     """Một người bị hạ (hết máu): đóng băng, rớt cờ, ghi thống kê và thông báo. killer=None nghĩa là do quái vật/laze."""
     if victim.down > 0:
@@ -1481,23 +1568,25 @@ def defeat(r, victim, killer=None):
     victim.down = DOWN_S; drop_flag(r, victim); victim.un = -1
     r.ev.append(["d", round(victim.x), round(victim.y), victim.team])
     victim.deaths += 1
+    victim.ut = 0.0; victim.ch = 0.0; victim.hopn = 0; victim.hop = False; victim.inv = 0.0; victim.slw = victim.zb = victim.fz = 0.0
     r.ev.append(["nk", victim.pid, killer.pid if killer is not None else -1])
     if killer is not None:
-        killer.kills += 1; killer.score += PTS_KILL
+        killer.kills += 1; killer.score += PTS_KILL; add_rage(killer, RAGE_KILL)
         on_kill(r, victim, killer.team)
 
 
 def shielding(p):
-    return p.sh and p.w == 1 and p.down <= 0
+    return p.sh and p.down <= 0 and p.shp >= 1
 
 
-def blocked(r, q, sx, sy):
+def blocked(r, q, sx, sy, d=1):
     """Đòn đánh từ (sx, sy) vào q bị khiên chặn nếu q đang giơ khiên và nguồn nằm trong cung phía trước."""
     if not shielding(q):
         return False
     ang = abs((math.atan2(sy - q.y, sx - q.x) - q.a + math.pi) % (2 * math.pi) - math.pi)
     if ang > SHIELD_ARC + SHIELD_ARC_UP * q.up:
         return False
+    q.shp = max(0.0, q.shp - d)  # khiên chịu sát thương của đòn bị chặn; hết máu thì không giơ được cho tới khi hồi
     r.ev.append(["k", round(q.x), round(q.y), q.team])
     return True
 
@@ -1513,7 +1602,7 @@ def hit_mon(r, mo, team, by=None, dmg=1):
     mo["alive"] = False; mo["rt"] = c["rt"]
     r.kp[team] += c["pts"]
     if by is not None:
-        by.score += c["pts"]
+        by.score += c["pts"]; add_rage(by, c["pts"] * 0.4)
     for _ in range(random.randint(3, 4) if mo["t"] >= 2 else random.randint(1, 2)):
         drop_orb(r, mo["x"], mo["y"], 0, random.randint(*c["exp"]))
     if random.random() < c["heal"]:
@@ -1548,9 +1637,9 @@ def laser_step(r, mo):
             for p in r.players.values():
                 dx, dy = p.x - mo["x"], p.y - mo["y"]
                 if p.down <= 0 and 0 <= dx * ca + dy * sa <= L and abs(-dx * sa + dy * ca) < PR + 7:
-                    if blocked(r, p, mo["x"], mo["y"]):
+                    if blocked(r, p, mo["x"], mo["y"], LASER_DMG):
                         continue
-                    p.hp -= LASER_DMG
+                    p.hp -= dmg_calc(r, p, LASER_DMG)
                     r.ev.append(["h", round(p.x), round(p.y), p.team])
                     if p.hp <= 0:
                         defeat(r, p)
@@ -1716,9 +1805,9 @@ def mon_step(r):
                 if not hit_wall(mo["x"], ny, mo["r"]): mo["y"] = ny
         if tg and bd < PR + mo["r"] + 2 and mo["cd"] <= 0:
             mo["cd"] = 1.1
-            if blocked(r, tg, mo["x"], mo["y"]):
+            if blocked(r, tg, mo["x"], mo["y"], c["dmg"]):
                 continue
-            tg.hp -= c["dmg"]
+            tg.hp -= dmg_calc(r, tg, c["dmg"])
             r.ev.append(["h", round(tg.x), round(tg.y), tg.team])
             if tg.hp <= 0:
                 defeat(r, tg)
@@ -1748,6 +1837,8 @@ KB_STUN = {0: 0.6, 1: 0.6, 2: 0.35, 3: 0.5, 4: 0.4, 5: 0.5}       # thời gian 
 
 def knock_player(r, q, src):
     """Kiếm trúng người chơi: bật lùi + ngắt hành động (vung kiếm, bắn, cắm/cướp cờ) trong KB_T giây."""
+    if (q.g == 1 and q.ut > 0) or q.inv > 0:
+        return
     d = math.hypot(q.x - src.x, q.y - src.y)
     a = math.atan2(q.y - src.y, q.x - src.x) if d > 1 else src.a
     q.kbt = KB_T; q.kvx = math.cos(a) * KB_DIST / KB_T; q.kvy = math.sin(a) * KB_DIST / KB_T
@@ -1944,7 +2035,200 @@ def nav_steer(ai, x, y, tx, ty, now):
     return path[i]
 
 
+def start_hop(p):
+    """Thỏ: một cú nhảy lướt HOP_D px trong ~HOP_T giây (máy chủ tự di chuyển như bị bật lùi, nhưng bất tử)."""
+    p.hopn -= 1; p.hop = True
+    d = math.hypot(p.dx, p.dy)
+    ax, ay = (p.dx / d, p.dy / d) if d > 0.1 else (math.cos(p.a), math.sin(p.a))
+    p.kvx, p.kvy = ax * HOP_D / HOP_T, ay * HOP_D / HOP_T
+    p.kbt = HOP_T - 0.01; p.inv = HOP_T + 0.1
+    p.sw = 0.0; p.fl = False; p.prog = 0.0; p.pf = -1; p.un = -1; p.ep += 1
+
+
+def hop_land(r, p):
+    r.ev.append(["ult", 2, round(p.x), round(p.y), p.team, p.pid])
+    for q in r.players.values():
+        if q.team != p.team and q.team in (0, 1) and q.down <= 0 and math.hypot(q.x - p.x, q.y - p.y) < 60 + PR:
+            stun(q, 0.5)
+
+
+def shockwave(r, p):
+    """Voi Giậm Đất: sóng xung kích SHOCK_R, 2 sát thương, đẩy lùi, choáng, làm chậm 30% trong 3 giây."""
+    for q in r.players.values():
+        if q.team == p.team or q.team not in (0, 1) or q.down > 0 or math.hypot(q.x - p.x, q.y - p.y) > SHOCK_R + PR:
+            continue
+        if not clear_shot(p.x, p.y, q.x, q.y) or blocked(r, q, p.x, p.y, 2):
+            continue
+        q.hp -= dmg_calc(r, q, 2, p)
+        r.ev.append(["h", round(q.x), round(q.y), q.team])
+        if q.hp <= 0:
+            defeat(r, q, p)
+        else:
+            knock_player(r, q, p); slow(q, 3.0, 0.7)
+    for mo in r.mons:
+        if mo["alive"] and not friendly(mo, p.team) and math.hypot(mo["x"] - p.x, mo["y"] - p.y) <= SHOCK_R + mo["r"] and clear_shot(p.x, p.y, mo["x"], mo["y"]):
+            hit_mon(r, mo, p.team, p, 3 if mo["t"] in (0, 1) else 2)
+            if mo["alive"]:
+                knock_mon(mo, p.x, p.y)
+
+
+def frog_tongue(r, p):
+    """Ếch Lưỡi Thần: kéo địch đầu tiên trên đường về sát mình, choáng 1s; đang vác cờ thì rơi cờ. Trượt/bị khiên chặn trả lại 50 nộ."""
+    ca, sa = math.cos(p.a), math.sin(p.a)
+    best, bp = None, 1e9
+    for q in r.players.values():
+        if q.team == p.team or q.team not in (0, 1) or q.down > 0 or q.inv > 0:
+            continue
+        dx, dy = q.x - p.x, q.y - p.y
+        pr = dx * ca + dy * sa
+        if 0 <= pr <= FROG_L and abs(-dx * sa + dy * ca) < PR + 8 and pr < bp and clear_shot(p.x, p.y, q.x, q.y):
+            best, bp = q, pr
+    end = bp if best else FROG_L
+    r.ev.append(["ulf", round(p.x), round(p.y), round(p.x + ca * end), round(p.y + sa * end), p.team, 8])
+    if best is None or blocked(r, best, p.x, p.y):
+        return False
+    nx, ny = p.x + ca * (PR * 2 + 4), p.y + sa * (PR * 2 + 4)
+    if not hit_wall(nx, ny, PR):
+        best.x, best.y = nx, ny
+    if best.carry >= 0:
+        r.ev.append(["nf", 3, best.pid, r.flags[best.carry]["letter"], -1])
+        drop_flag(r, best)
+        r.ev.append(["p", round(best.x), round(best.y), best.team])
+    stun(best, 1.0); best.ep += 1; best.tpos = time.time() + 2.0
+    return True
+
+
+def eagle_fire(r, p):
+    """Đại Bàng: tia xuyên người tầm EAGLE_L, EAGLE_DMG sát thương, dừng ở tường, khiên chặn được."""
+    cx, sy = math.cos(p.ca), math.sin(p.ca)
+    end = EAGLE_L
+    for i in range(1, int(EAGLE_L // 8) + 1):
+        if hit_wall(p.x + cx * i * 8, p.y + sy * i * 8, 2):
+            end = (i - 1) * 8; break
+    for q in r.players.values():
+        if q.team == p.team or q.team not in (0, 1) or q.down > 0:
+            continue
+        dx, dy = q.x - p.x, q.y - p.y
+        if 0 <= dx * cx + dy * sy <= end and abs(-dx * sy + dy * cx) < PR + 5 and not blocked(r, q, p.x, p.y, EAGLE_DMG):
+            q.hp -= dmg_calc(r, q, EAGLE_DMG, p)
+            r.ev.append(["h", round(q.x), round(q.y), q.team])
+            if q.hp <= 0:
+                defeat(r, q, p)
+    for mo in r.mons:
+        if mo["alive"] and not friendly(mo, p.team):
+            dx, dy = mo["x"] - p.x, mo["y"] - p.y
+            if 0 <= dx * cx + dy * sy <= end and abs(-dx * sy + dy * cx) < mo["r"] + 5:
+                hit_mon(r, mo, p.team, p, EAGLE_DMG)
+    r.ev.append(["ulf", round(p.x), round(p.y), round(p.x + cx * end), round(p.y + sy * end), p.team, 9])
+
+
+def use_ult(r, p):
+    """Dùng tuyệt chiêu khi nộ đầy. Trả về True nếu kích hoạt được."""
+    if r.phase != "play" or p.team not in (0, 1) or p.down > 0 or p.kbt > 0 or p.rage < RAGE_MAX or p.ut > 0 or p.ch > 0 or p.hopn > 0:
+        return False
+    if p.g in ULT_ATK and p.carry >= 0:
+        return False
+    g = p.g; keep = 0.0
+    r.ev.append(["ult", g, round(p.x), round(p.y), p.team, p.pid])
+    if g == 0: p.ut = 4.0
+    elif g == 1: p.ut = 5.0; p.hp = min(p.mhp, p.hp + 2)
+    elif g == 2: p.ut = 4.0; p.hopn = 3; start_hop(p)
+    elif g == 3: p.ut = 6.0
+    elif g == 4: shockwave(r, p)
+    elif g == 5: p.ut = 5.0; p.ux, p.uy = p.x, p.y
+    elif g == 6:
+        tg, bd = None, 220.0
+        for q in r.players.values():
+            d = math.hypot(q.x - p.x, q.y - p.y)
+            if q.team != p.team and q.team in (0, 1) and q.down <= 0 and d < bd and clear_shot(p.x, p.y, q.x, q.y):
+                tg, bd = q, d
+        if tg:
+            for dist in (PR * 2 + 6, PR * 2 + 14, PR * 2 + 2):
+                nx, ny = tg.x - math.cos(tg.a) * dist, tg.y - math.sin(tg.a) * dist
+                if not hit_wall(nx, ny, PR):
+                    p.x, p.y = nx, ny; p.a = math.atan2(tg.y - ny, tg.x - nx); break
+            p.ep += 1; p.tpos = time.time() + 2.0
+        p.ut = 4.0; p.bs = True
+    elif g == 7:
+        for q in r.players.values():
+            if q.team != p.team and q.team in (0, 1) and q.down <= 0 and math.hypot(q.x - p.x, q.y - p.y) < ROAR_R + PR:
+                stun(q, 0.8)
+        p.ut = 5.0; p.hc = 0
+    elif g == 8:
+        if not frog_tongue(r, p): keep = 50.0
+    elif g == 9:
+        p.ch = EAGLE_CH; p.ca = p.a
+    p.rage = keep
+    return True
+
+
+def bot_ult(r, p):
+    """Bot dùng tuyệt chiêu theo tình huống đơn giản (không áp dụng cho bot thay người AFK/rời trận)."""
+    if p.rage < RAGE_MAX or p.ut > 0 or p.ch > 0 or p.hopn > 0 or p.kbt > 0 or (p.g in ULT_ATK and p.carry >= 0):
+        return
+    foes = [q for q in r.players.values() if q.team != p.team and q.team in (0, 1) and q.down <= 0]
+    near = lambda R: [q for q in foes if math.hypot(q.x - p.x, q.y - p.y) < R]
+    g = p.g; ok = False
+    if g in (0, 2): ok = p.carry >= 0 and bool(near(300))
+    elif g in (1, 4, 7): ok = len(near(130)) >= 2 or (bool(near(110)) and p.hp <= 1)
+    elif g == 3: ok = bool(near(350))
+    elif g == 5: ok = len(near(140)) >= 2
+    elif g == 6: ok = bool(near(220))
+    elif g == 8:
+        cs = [q for q in foes if q.carry >= 0 and 60 < math.hypot(q.x - p.x, q.y - p.y) < FROG_L - 20 and clear_shot(p.x, p.y, q.x, q.y)]
+        if cs:
+            q = min(cs, key=lambda q: math.hypot(q.x - p.x, q.y - p.y)); p.a = math.atan2(q.y - p.y, q.x - p.x); ok = True
+    elif g == 9:
+        cs = [q for q in foes if 150 < math.hypot(q.x - p.x, q.y - p.y) < EAGLE_L - 100 and clear_shot(p.x, p.y, q.x, q.y)]
+        if cs:
+            q = min(cs, key=lambda q: math.hypot(q.x - p.x, q.y - p.y)); p.a = math.atan2(q.y - p.y, q.x - p.x); ok = True
+    if ok:
+        use_ult(r, p)
+
+
+def ult_tick(r):
+    """Mỗi tick: đếm ngược hiệu lực tuyệt chiêu, xử lý yêu cầu bấm chiêu, vùng Bão Tuyết và tia ngắm của Đại Bàng."""
+    pl = [p for p in r.players.values() if p.team in (0, 1)]
+    for p in pl:
+        if p.down > 0:
+            p.ur = False; continue
+        p.shp = min(SHIELD_HP, p.shp + DT / SHIELD_REGEN)
+        p.ut = max(0.0, p.ut - DT); p.inv = max(0.0, p.inv - DT); p.slw = max(0.0, p.slw - DT); p.zb = max(0.0, p.zb - DT)
+        if p.fz > 0: p.fz = max(0.0, p.fz - DT)
+        if p.g == 6 and p.ut <= 0: p.bs = False
+        if p.bot and not (p.auto or p.away or p.proxy):
+            bot_ult(r, p)
+        if p.ur:
+            p.ur = False; use_ult(r, p)
+        if p.ch > 0:  # Đại Bàng ngắm: 0.6s, khoá hướng ở 0.2s cuối (bot tự ngắm địch gần nhất)
+            if p.kbt > 0:
+                p.ch = 0.0
+            else:
+                if p.ch > 0.2:
+                    p.ca = p.a
+                    if p.bot:
+                        fs = [q for q in pl if q.team != p.team and q.down <= 0 and math.hypot(q.x - p.x, q.y - p.y) < EAGLE_L]
+                        if fs:
+                            q = min(fs, key=lambda q: math.hypot(q.x - p.x, q.y - p.y)); p.ca = math.atan2(q.y - p.y, q.x - p.x)
+                p.ch -= DT
+                if p.ch <= 0:
+                    p.ch = 0.0; eagle_fire(r, p)
+    for p in pl:  # Bão Tuyết: địch trong vùng chậm 40% và bị đóng băng sau ~2s; đồng đội +15% tốc độ
+        if p.g == 5 and p.ut > 0 and p.down <= 0:
+            for q in pl:
+                if q.down > 0 or math.hypot(q.x - p.ux, q.y - p.uy) > SNOW_R:
+                    continue
+                if q.team == p.team:
+                    q.zb = max(q.zb, 0.25)
+                else:
+                    slow(q, 0.25, 0.6); q.fz += 2 * DT
+                    if q.fz >= 2.0:
+                        stun(q, 1.0); q.fz = -3.0
+
+
 def step(r, live):
+    if live:
+        ult_tick(r)
     for p in r.players.values():
         if p.down > 0:
             p.act = time.time()  # đang bị đóng băng thì chưa tính AFK
@@ -1963,6 +2247,10 @@ def step(r, live):
             p.kbt -= DT; p.fl = False; p.sw = 0.0
             if p.kbt <= 0:
                 p.kbt = 0.0; p.ep += 1; p.tpos = time.time()
+                if p.hop:
+                    hop_land(r, p)
+                    if p.hopn > 0: start_hop(p)
+                    else: p.hop = False
             continue
         if p.dsh > 0:  # kiếm aimlock: đang lao vào địch (máy chủ tự di chuyển, client bám theo), lao xong thì chém ngay
             nx = p.x + p.dvx * DT
@@ -1982,7 +2270,7 @@ def step(r, live):
             if p.auto:
                 p.ep += 1  # client luôn bám theo vị trí do máy chủ (bot) điều khiển
         if botted(p) or time.time() - p.tpos > 0.5:  # client không gửi vị trí (mất kết nối/đời cũ) thì máy chủ tự mô phỏng
-            sp = SPEED * CHARS[p.g][2] * (1 + 0.04 * (p.lv - 1)) * (CARRY_K if p.carry >= 0 else 1) * (CHARS[p.g][3] if in_river(p.x, p.y) else 1) * (SHIELD_K if shielding(p) else 1)
+            sp = SPEED * CHARS[p.g][2] * (1 + 0.04 * (p.lv - 1)) * (CARRY_K if p.carry >= 0 else 1) * (CHARS[p.g][3] if in_river(p.x, p.y) else 1) * (SHIELD_K if shielding(p) else 1) * speed_mult(p)
             nx = p.x + p.dx * sp * DT
             if not hit_wall(nx, p.y, PR): p.x = nx
             ny = p.y + p.dy * sp * DT
@@ -2003,10 +2291,12 @@ def step(r, live):
                     continue
             p.cool, p.sw = SWORD_COOL, SWORD_T
             r.ev.append(["m", round(p.x), round(p.y), p.team, p.pid])
+            spin = p.g == 1 and p.ut > 0
+            srd = SWORD_R * (1.25 if p.g == 7 and p.ut > 0 else 1.0) + (12 if spin else 0)
             for mo in r.mons:
-                if mo["alive"] and not friendly(mo, p.team) and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < SWORD_R + mo["r"] + 4 * (p.lv - 1):
+                if mo["alive"] and not friendly(mo, p.team) and math.hypot(mo["x"] - p.x, mo["y"] - p.y) < srd + mo["r"] + 4 * (p.lv - 1):
                     ang = abs((math.atan2(mo["y"] - p.y, mo["x"] - p.x) - p.a + math.pi) % (2 * math.pi) - math.pi)
-                    if ang < 1.05 or math.hypot(mo["x"] - p.x, mo["y"] - p.y) < PR + mo["r"] + 6:
+                    if spin or ang < 1.05 or math.hypot(mo["x"] - p.x, mo["y"] - p.y) < PR + mo["r"] + 6:
                         hit_mon(r, mo, p.team, p, SWORD_DMG_UP[min(p.up, 3)])
                         if mo["alive"]:
                             knock_mon(mo, p.x, p.y)
@@ -2014,24 +2304,24 @@ def step(r, live):
                 if q.team == p.team or q.down > 0:
                     continue
                 dd = math.hypot(q.x - p.x, q.y - p.y)
-                if dd >= SWORD_R + 4 * (p.lv - 1):
+                if dd >= srd + 4 * (p.lv - 1):
                     continue
                 ang = abs((math.atan2(q.y - p.y, q.x - p.x) - p.a + math.pi) % (2 * math.pi) - math.pi)
-                if dd < PR + 6 or ang < 1.05:
-                    if blocked(r, q, p.x, p.y):
+                if spin or dd < PR + 6 or ang < 1.05:
+                    if blocked(r, q, p.x, p.y, SWORD_DMG_UP[min(p.up, 3)]):
                         continue
-                    q.hp -= SWORD_DMG_UP[min(p.up, 3)]
+                    q.hp -= dmg_calc(r, q, SWORD_DMG_UP[min(p.up, 3)], p)
                     r.ev.append(["h", round(q.x), round(q.y), q.team])
                     if q.hp <= 0:
                         defeat(r, q, p)
                     else:
                         knock_player(r, q, p)
-        elif fire and p.cool <= 0 and p.w == 0:
+        elif fire and p.cool <= 0 and p.w == 0 and not shielding(p):
             p.cool = COOL
             r.bullets.append({"x": p.x + math.cos(p.a) * (PR + 3), "y": p.y + math.sin(p.a) * (PR + 3),
                               "vx": math.cos(p.a) * BSPEED, "vy": math.sin(p.a) * BSPEED, "t": p.team, "life": BLIFE, "o": p, "dmg": GUN_DMG[min(p.up, 3)]})
             r.ev.append(["s", round(p.x), round(p.y), p.team, p.pid])
-        elif fire and p.cool <= 0 and p.w == 2 and p.rk > 0:  # súng tên lửa: bắn 1 quả đuổi mục tiêu
+        elif fire and p.cool <= 0 and p.w == 2 and p.rk > 0 and not shielding(p):  # súng tên lửa: bắn 1 quả đuổi mục tiêu
             p.cool = RK_COOL; p.rk -= 1
             r.rockets.append({"x": p.x + math.cos(p.a) * (PR + 8), "y": p.y + math.sin(p.a) * (PR + 8), "a": p.a, "t": p.team,
                               "life": RK_LIFE, "o": p})
@@ -2056,7 +2346,7 @@ def step(r, live):
                     f["c"] = None; f["planted"] = p.team; f["slot"] = slot
                     f["x"] = bx + (1 if p.team == 0 else -1) * 1.5 * T; f["y"] = by + (slot - 1.5) * 1.1 * T
                     r.ev.append(["pl", round(f["x"]), round(f["y"]), p.team])
-                    r.ev.append(["nf", 2, p.pid, f["letter"], p.team])
+                    r.ev.append(["nf", 2, p.pid, f["letter"], p.team]); add_rage(p, RAGE_FLAG)
                     p.carry = -1; p.prog = 0.0
             else:
                 p.prog = 0.0
@@ -2107,9 +2397,9 @@ def step(r, live):
                 hit_mon(r, mh, b["t"], b.get("o"), b.get("dmg", 1))
                 continue
         if hit:
-            if blocked(r, hit, b["x"], b["y"]):
+            if blocked(r, hit, b["x"], b["y"], b.get("dmg", 1)):
                 continue  # khiên chặn: đạn biến mất
-            hit.hp -= b.get("dmg", 1)
+            hit.hp -= dmg_calc(r, hit, b.get("dmg", 1), b.get("o"))
             r.ev.append(["h", round(hit.x), round(hit.y), hit.team])
             if hit.hp <= 0:
                 defeat(r, hit, None if b.get("mon") else b["o"])
@@ -2128,9 +2418,9 @@ def rocket_explode(r, rk):
     for q in list(r.players.values()):
         if q.team == t or q.down > 0 or math.hypot(q.x - x, q.y - y) > RK_SPLASH + PR:
             continue
-        if blocked(r, q, x, y):
+        if blocked(r, q, x, y, RK_DMG):
             continue
-        q.hp -= RK_DMG
+        q.hp -= dmg_calc(r, q, RK_DMG, o)
         r.ev.append(["h", round(q.x), round(q.y), q.team])
         if q.hp <= 0:
             defeat(r, q, o)
@@ -2146,7 +2436,7 @@ def rocket_step(r):
         # tìm mục tiêu gần nhất trong tầm: người chơi địch (còn sống) hoặc quái không cùng đội
         tg, bd = None, RK_SEEK
         for q in r.players.values():
-            if q.team != rk["t"] and q.down <= 0 and not in_bush(q.x, q.y):  # không dò được người đang núp bụi cỏ
+            if q.team != rk["t"] and q.down <= 0 and (not in_bush(q.x, q.y) or owl_on(r, rk["t"])):  # không dò được người đang núp bụi cỏ
                 d = math.hypot(q.x - rk["x"], q.y - rk["y"])
                 if d < bd:
                     tg, bd = (q.x, q.y, PR), d
@@ -2197,6 +2487,17 @@ def _emit_safe(ev, data, sid):
         pass  # một client lỗi/đã đóng không được làm hỏng cả trận
 
 
+def seen_by(p, t, seers, owl):
+    """Đội t có thấy p không: đồng đội / Cú soi sáng thấy hết; núp bụi hoặc Mèo tàng hình chỉ lộ khi có người đội t ở gần."""
+    if p.team == t or owl:
+        return True
+    bush = in_bush(p.x, p.y)
+    if not bush and not (p.g == 6 and p.ut > 0):
+        return True
+    rad = SEE_R if bush else 80.0
+    return any(math.hypot(p.x - s.x, p.y - s.y) < rad for s in seers)
+
+
 def send_state(r):
     """Mỗi đội nhận một bản trạng thái riêng: địch đứng trong bụi cỏ (không có đồng đội ở gần) sẽ bị ẩn."""
     evs, r.ev = r.ev, []
@@ -2205,11 +2506,11 @@ def send_state(r):
         if not team:
             continue
         seers = [p for p in team if p.down <= 0]
-        vis = [p for p in list(r.players.values()) if p.team == t or not in_bush(p.x, p.y)
-               or any(math.hypot(p.x - s.x, p.y - s.y) < SEE_R for s in seers)]
+        owl = owl_on(r, t)
+        vis = [p for p in list(r.players.values()) if seen_by(p, t, seers, owl)]
         ids = {p.pid for p in vis}
         st = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused,
-              "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk, 1 if p.dsh > 0 else (2 if p.lkt > 0 else 0)] for p in vis],
+              "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk, 1 if p.dsh > 0 else (2 if p.lkt > 0 else 0), round(speed_mult(p), 2), round(max(p.ut, 0.0), 1), int(p.rage), round(p.ca, 2) if p.ch > 0 else 9, round(p.ux), round(p.uy), round(p.shp, 1)] for p in vis],
               "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] if (not f["c"] or f["c"].pid in ids)
                     else [-1, -1, f["c"].pid, -1] for f in r.flags],
               "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp, "un": r.unp, "um": UNPLANT_MAX,
@@ -2224,7 +2525,7 @@ def send_state(r):
     if r.specs:
         everyone = list(r.players.values())
         full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1,
-                "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk, 1 if p.dsh > 0 else (2 if p.lkt > 0 else 0)] for p in everyone],
+                "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk, 1 if p.dsh > 0 else (2 if p.lkt > 0 else 0), round(speed_mult(p), 2), round(max(p.ut, 0.0), 1), int(p.rage), round(p.ca, 2) if p.ch > 0 else 9, round(p.ux), round(p.uy), round(p.shp, 1)] for p in everyone],
                 "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] for f in r.flags],
                 "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp, "un": r.unp, "um": UNPLANT_MAX,
               "rk": [[round(k["x"]), round(k["y"]), round(k["a"], 2), k["t"], k["o"].pid] for k in r.rockets],

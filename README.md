@@ -24,7 +24,7 @@ Dùng để trình diễn game mà không cần người chơi. Khi tạo phòng
 | 🔫 Súng bong bóng nước | Bắn xa, đạn bay thẳng, 1 sát thương, hồi 0.32 giây. Có **tự ngắm**: đạn hút nhẹ về địch/quái gần tâm ngắm nhất, trong tầm và không bị tường chắn |
 | 🗡️ Kiếm nhựa trẻ em | Chém hình quạt tầm gần (58 px), **2 sát thương**, hồi 0.55 giây. Trúng thì **đẩy lùi** và làm địch choáng, ngắt hành động của họ. **Aimlock:** có địch (người, quái, hiệp sĩ, thần giữ cờ) trong ~130 px (`SWORD_LOCK_R`) và không bị tường chắn thì nhát chém tự quay về phía địch gần nhất; nếu địch hơi xa tầm kiếm, nhân vật **lao vào** (0.15 giây) rồi chém ngay. Người núp bụi cỏ không bị khoá; bị đánh bật lùi thì mất đà lao |
 | 🚀 Súng tên lửa (mới) | Nhặt trên bản đồ, được **3 quả**. Tên lửa **tự dẫn** tới địch/quái gần nhất trong 460 px (không dò được người đang núp bụi cỏ), nổ lan bán kính 62 px, **3 sát thương**, hồi 0.8 giây. Tường chặn được tên lửa, khiên chặn được vụ nổ từ phía trước |
-| 🛡️ Khiên | Chỉ dùng khi cầm kiếm. Giơ khiên chặn được đòn (đạn, kiếm, laze, quái) đến từ phía trước trong khoảng ±66°, nhưng đi chậm còn 60% |
+| 🛡️ Khiên | Dùng được với cả 3 vũ khí (súng, kiếm, tên lửa); đang giơ khiên thì không bắn/chém được. Khiên có **5 máu** (hiện 5 ô nhỏ dưới chân), mỗi đòn chặn trừ máu khiên bằng sát thương của đòn đó, hết máu thì không giơ được; **hồi 1 máu mỗi 10 giây**, mỗi round đầy lại. Giơ khiên chặn được đòn (đạn, kiếm, laze, quái) đến từ phía trước trong khoảng ±66°, nhưng đi chậm còn 60% |
 
 Trúng 1 đòn súng mất 1 máu, trúng 1 nhát kiếm mất 2 máu (mặc định có 3 máu). Hết máu thì bị "đóng băng" 5 giây rồi hồi sinh ở căn cứ. Người đang vác cờ không bắn và không chém được.
 
@@ -32,7 +32,7 @@ Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần gi
 
 ## 10 nhân vật động vật (mới)
 
-Mỗi người chọn một nhân vật ở sảnh (bot chọn ngẫu nhiên). Nhân vật chốt khi bắt đầu trận, không đổi được giữa trận. Hiện mỗi nhân vật khác nhau ở **ngoại hình** và **nội tại về chỉ số**; tuyệt chiêu và combo sẽ bổ sung ở bản sau.
+Mỗi người chọn một nhân vật ở sảnh (bot chọn ngẫu nhiên). Nhân vật chốt khi bắt đầu trận, không đổi được giữa trận. Hiện mỗi nhân vật khác nhau ở **ngoại hình** và **nội tại về chỉ số**; mỗi nhân vật còn có **tuyệt chiêu** dùng bằng thanh Nộ (xem mục Nộ và tuyệt chiêu bên dưới).
 
 | # | Nhân vật | Nội tại hiện có |
 |---|---|---|
@@ -48,6 +48,29 @@ Mỗi người chọn một nhân vật ở sảnh (bot chọn ngẫu nhiên). N
 | 10 | 🦅 Đại Bàng Thiện Xạ | Chạy nhanh hơn 3%, qua sông chỉ chậm 15% |
 
 Chỉ số nằm ở bảng `CHARS` đầu `main.py` (máu cộng thêm, hệ số tốc độ, hệ số tốc độ khi lội sông). Client có bảng `CHS` trong `flag.html` dùng để dự đoán di chuyển, **hai bảng phải giống nhau**.
+
+## Nộ và tuyệt chiêu (mới)
+
+Mỗi người có **thanh Nộ 0-100**, reset mỗi round. Đầy nộ thì bấm `R` (điện thoại: nút 🔥 nằm ngay bên trái nút ngắm/bắn, kéo chỉnh được trong chế độ bố trí ⚙️) để dùng tuyệt chiêu của nhân vật; dùng xong nộ về 0.
+
+- **Nộ nhận được:** gây 1 máu +4, mất 1 máu +6, hạ người +25, hạ quái +40% điểm của quái đó, cắm/cướp cờ +10. Bị hạ thì **vẫn giữ nguyên thanh nộ** (chỉ tuyệt chiêu đang chạy bị ngắt).
+- **Chiêu tấn công** (Gấu, Voi, Mèo, Hổ, Ếch, Đại Bàng) không dùng được khi đang vác cờ. Chiêu của Cáo, Thỏ, Cú, Cánh Cụt dùng được khi vác cờ.
+- Bot tự dùng chiêu theo tình huống. Bot chơi thay người AFK/rời trận thì không dùng.
+
+| Nhân vật | Tuyệt chiêu | Hiệu ứng |
+|---|---|---|
+| 🦊 Cáo | Bão Cáo Lửa | 4 giây chạy nhanh +40% (đang vác cờ +25%) |
+| 🐻 Gấu | Gấu Nổi Giận | 5 giây giảm nửa sát thương (làm tròn lên), miễn đẩy lùi/choáng, hồi 2 máu, kiếm chém vòng 360° |
+| 🐰 Thỏ | Ba Cú Nhảy | 3 cú lướt 150 px bất tử, hạ cánh choáng địch 0.5s, 4 giây chạy +15% |
+| 🦉 Cú | Mắt Cú Soi Sáng | 6 giây cả đội thấy mọi địch (kể cả trong bụi), đánh địch +1 sát thương, tên lửa dò được người trong bụi |
+| 🐘 Voi | Voi Giậm Đất | Sóng 130 px: 2 sát thương, đẩy lùi, làm chậm 30% trong 3s, ngắt laze thần giữ cờ |
+| 🐧 Cánh Cụt | Bão Tuyết | Vùng băng 140 px trong 5s: địch chậm 40%, ở lại ~2s thì đóng băng 1s; đồng đội +15% tốc độ |
+| 🐱 Mèo | Ảnh Sát | Dịch chuyển ra sau lưng địch gần nhất (220 px), tàng hình 4s, đòn đầu +2 sát thương |
+| 🐯 Hổ | Hổ Gầm | Choáng địch quanh 180 px trong 0.8s, 5s kiếm dài +25%, hút 1 máu mỗi 2 đòn, +8% tốc độ |
+| 🐸 Ếch | Lưỡi Ếch Thần | Lưỡi 320 px kéo địch đầu tiên về, choáng 1s, đang vác cờ thì rơi cờ. Trượt hoặc bị khiên chặn: hoàn lại 50 nộ |
+| 🦅 Đại Bàng | Xuyên Tâm | Ngắm 0.6s (có đường đỏ báo trước), tia xuyên người tầm 700 px, 3 sát thương |
+
+Hằng số cân bằng nằm ở đầu `main.py` (`RAGE_*`, `ULT_ATK`, `HOP_*`, `SHOCK_R`, `SNOW_R`, `ROAR_R`, `FROG_L`, `EAGLE_*`); hiệu lực từng chiêu nằm trong `use_ult()`. Nhớ chạy lại máy chủ và dùng `version.json` mới (v3.6) để các tab cũ tải lại.
 
 ## Quái vật, hiệp sĩ, EXP và cấp độ
 
@@ -105,7 +128,7 @@ Chỉ số nằm ở bảng `CHARS` đầu `main.py` (máu cộng thêm, hệ s�
 
 **Điều khiển**
 
-- Máy tính: `W A S D` hoặc phím mũi tên để di chuyển, chuột để ngắm, `Space` hoặc bấm chuột trái để tấn công, phím **`1`** súng bong bóng, **`2`** kiếm gỗ, **`3`** súng tên lửa (`E` / `Q` đổi vũ khí lần lượt), **giữ chuột phải hoặc `Shift` để giơ khiên** (khi cầm kiếm), `G` để thả cờ / nhổ cờ nhà (khi đứng cạnh cờ đã cắm), `P` hoặc `Esc` để tạm dừng, `M` để tắt/bật âm thanh, bấm thanh điểm để xem thống kê (`Esc` để đóng).
+- Máy tính: `W A S D` hoặc phím mũi tên để di chuyển, chuột để ngắm, `Space` hoặc bấm chuột trái để tấn công, phím **`1`** súng bong bóng, **`2`** kiếm gỗ, **`3`** súng tên lửa (`E` / `Q` đổi vũ khí lần lượt), **giữ chuột phải hoặc `Shift` để giơ khiên** (mọi vũ khí; phím `E` chỉ còn đổi vũ khí), `G` để thả cờ / nhổ cờ nhà (khi đứng cạnh cờ đã cắm), `P` hoặc `Esc` để tạm dừng, `M` để tắt/bật âm thanh, bấm thanh điểm để xem thống kê (`Esc` để đóng).
 - Điện thoại: cần trái để di chuyển, cần phải để ngắm và tự bắn, nút **1** 🔫 / **2** 🗡️ / **3** 🚀 (hiện số đạn) để chọn vũ khí, nút 🛡️ (kéo/giữ) để giơ khiên, nút 🏳️ để thả cờ (khi vác cờ) và đổi thành ⛏️ để nhổ cờ khi đứng gần lá cờ nhà đã cắm. Nên xoay ngang màn hình. Vị trí các nút có thể kéo chỉnh trong game.
 - **Đáp án đã cắm:** thanh điểm giữa phía trên màn hình hiện chữ cái (A/B/C/D, đúng màu lá cờ) ngay sau điểm của mỗi đội đang cắm cờ, `–` nếu đội chưa cắm. Ở sân nhà mỗi đội có chữ cái lớn mờ trên nền đất, cộng thêm chữ nổi ngay phía trên lá cờ đã cắm, ai cũng thấy được.
 - **Map ban đêm 🌙 (khó):** chủ phòng chọn ở mục Bản đồ trong Cài đặt phòng (chỉ đổi được ở phòng chờ). Màn hình tối, chỉ sáng quanh đồng đội, căn cứ và cờ đã cắm. Có `ZOMBIE_COUNT` zombie (mặc định 16, rải đối xứng) lang thang và đuổi người ở gần. **Khi có đội cắm cờ, cả bầy xông về nhà đội đó** (đi vòng tường, chỉ dừng đánh người trong tầm gần), bảng tin báo và đội bị tấn công thấy chữ "ZOMBIE TẤN CÔNG!". Zombie 5 máu, hạ được cho điểm và EXP, hồi sinh sau 30 giây. Bản đồ dùng cùng địa hình với ban ngày.
