@@ -93,6 +93,8 @@ MAXLV = 5
 REJOIN_S = env_num("REJOIN_SECONDS", 90)  # giữ chỗ cho người chơi mất kết nối giữa trận (giây); 0 = tắt
 AFK_S = env_num("AFK_SECONDS", 60)  # đứng yên, không bấm gì quá chừng này giây giữa round thì bot chơi thay tạm thời (bấm lại là lấy lại quyền); 0 = tắt
 MAX_SPECS = env_num("MAX_SPECTATORS", 30)
+AUTO_START_S = env_num("AUTO_START_SECONDS", 5)  # đếm ngược trước khi tự bắt đầu khi phòng đủ đội (giây)
+AUTO_AFTER_S = env_num("AUTO_START_AFTER_SECONDS", 20)  # sau khi hết một trận, chờ chừng này giây mới tự bắt đầu trận kế (để kịp xem kết quả)
 HOST_KEEP_S = env_num("HOST_KEEP_SECONDS", 120)  # chủ phòng đóng trang ở phòng chờ: giữ ghế chủ phòng chừng này giây để vào lại; 0 = tắt
 MM_WAIT_S = env_num("MATCH_FILL_SECONDS", 60)  # ghép trận tự động: chờ quá chừng này giây thì lấp chỗ thiếu bằng bot; 0 = tắt
 T = 32; TW, TH = 80, 56; W, H = TW * T, TH * T     # bản đồ 80x56 ô
@@ -297,6 +299,7 @@ class Room:
         s.tlock = False  # khóa đội: người chơi thường không tự đổi đội được (chủ phòng vẫn đổi/chuyển được)
         s.rnd = False  # chia ngẫu nhiên người chơi vào hai đội mỗi khi chủ phòng bấm Bắt đầu
         s.late = False  # cho người mới vào chơi khi trận đã bắt đầu (nhận chỗ trống hoặc nhân vật do bot đang giữ hộ)
+        s.auto = False; s.auto_at = None; s.auto_block = 0.0  # tự bắt đầu khi đủ đội: auto_at = lúc sẽ bắt đầu (đang đếm ngược), auto_block = chưa tự bắt đầu trước lúc này
         s.banned = set()  # token trình duyệt của người đã bị kick
         s.players = {}; s.specs = {}; s.nextpid = 1; s.state = "lobby"; s.phase = "lobby"
         s.flags = []; s.bullets = []; s.q = None; s.round = 0; s.tl = 0.0; s.ev = []
@@ -329,7 +332,8 @@ def info(r):
     return {"code": r.code, "name": r.name, "size": r.size, "rounds": r.rounds, "pw": bool(r.pw), "state": r.state,
             "pve": r.pve, "eve": r.eve, "max": cap(r), "n": sum(1 for q in r.players.values() if not q.bot), "ns": len(r.specs),
             "host": (r.players.get(r.host) or r.specs.get(r.host) or P(0, "", 0)).pid,
-            "locked": r.locked, "tlock": r.tlock, "rnd": r.rnd, "late": r.late,
+            "locked": r.locked, "tlock": r.tlock, "rnd": r.rnd, "late": r.late, "auto": r.auto,
+            "ain": max(0, int(math.ceil(r.auto_at - time.time()))) if r.auto_at else -1,
             "teams": [[{"pid": p.pid, "nick": p.nick, "aw": int(p.away)} for p in r.players.values() if p.team == t and not p.bot] for t in (0, 1)],
             "specs": [{"pid": p.pid, "nick": p.nick, "aw": int(p.away)} for p in r.specs.values()]}
 
@@ -684,6 +688,10 @@ def on_cfg(d):
             r.locked = bool(d["locked"])
         if "late" in d:
             r.late = bool(d["late"]) and not r.eve
+        if "auto" in d:
+            r.auto = bool(d["auto"]) and not r.fill
+            if not r.auto:
+                r.auto_at = None
         if any(k in d for k in ("size", "rounds", "tlock", "rnd")):
             if r.state != "lobby":
                 emit("err", "Số người mỗi đội, số round, khóa đội và chia đội ngẫu nhiên chỉ đổi được ở phòng chờ.")
@@ -841,26 +849,70 @@ def on_unqueue():
         unq(request.sid)
 
 
+def start_match(r):
+    """Bắt đầu trận từ phòng chờ. Trả về chuỗi lỗi hoặc None nếu đã bắt đầu."""
+    if r.eve:
+        pass  # EvE: không cần người chơi, máy tự lập cả hai đội khi trận bắt đầu
+    elif r.pve:
+        if not any(p.team == 0 for p in r.players.values()):
+            return "Cần ít nhất 1 người chơi ở đội Xanh."
+    elif r.rnd and len(r.players) >= 2:
+        pass  # chia đội ngẫu nhiên ngay bên dưới nên không cần kiểm tra đội hiện tại
+    elif not r.fill and (not any(p.team == 0 for p in r.players.values()) or not any(p.team == 1 for p in r.players.values())):
+        return "Mỗi đội cần ít nhất 1 người."
+    if r.rnd and not (r.pve or r.eve):
+        shuffle_teams(r)
+    r.auto_at = None
+    r.state = "playing"; r.abort = False; r.paused = False; r.beat = time.time()
+    sio.start_background_task(run_match, r)
+    push(r)
+    return None
+
+
 @sio.on("start")
 def on_start():
     with LOCK:
         r = SID_ROOM.get(request.sid)
         if not r or r.host != request.sid or r.state != "lobby":
             return
-        if r.eve:
-            pass  # EvE: không cần người chơi, máy tự lập cả hai đội khi trận bắt đầu
-        elif r.pve:
-            if not any(p.team == 0 for p in r.players.values()):
-                return emit("err", "Cần ít nhất 1 người chơi ở đội Xanh.")
-        elif r.rnd and len(r.players) >= 2:
-            pass  # chia đội ngẫu nhiên ngay bên dưới nên không cần kiểm tra đội hiện tại
-        elif not r.fill and (not any(p.team == 0 for p in r.players.values()) or not any(p.team == 1 for p in r.players.values())):
-            return emit("err", "Mỗi đội cần ít nhất 1 người.")
-        if r.rnd and not (r.pve or r.eve):
-            shuffle_teams(r)
-        r.state = "playing"; r.abort = False; r.paused = False; r.beat = time.time()
-        sio.start_background_task(run_match, r)
-        push(r)
+        err = start_match(r)
+        if err:
+            emit("err", err)
+
+
+def room_full(r):
+    """Phòng chờ đã đủ đội: PvP = cả hai đội đủ size người; PvE = đội Xanh đủ size người. Không ai đang mất kết nối."""
+    if r.eve or r.fill or r.dead or r.state != "lobby":
+        return False
+    if any(q.away for q in list(r.players.values()) + list(r.specs.values())):
+        return False
+    teams = (0,) if r.pve else (0, 1)
+    return all(sum(1 for q in r.players.values() if q.team == t and not q.bot) >= r.size for t in teams)
+
+
+def auto_loop():
+    """Mỗi giây: phòng bật 'tự bắt đầu' mà đủ đội thì đếm ngược AUTO_START_S giây rồi vào trận; thiếu người lại thì huỷ đếm."""
+    while True:
+        sio.sleep(1)
+        try:
+            with LOCK:
+                now = time.time()
+                for r in list(ROOMS.values()):
+                    if not r.auto:
+                        if r.auto_at:
+                            r.auto_at = None; push(r)
+                        continue
+                    if room_full(r) and now >= r.auto_block:
+                        if not r.auto_at:
+                            r.auto_at = now + AUTO_START_S; push(r)
+                        elif now >= r.auto_at:
+                            start_match(r)
+                        else:
+                            push(r)  # cập nhật số giây còn lại
+                    elif r.auto_at:
+                        r.auto_at = None; push(r)
+        except Exception:
+            traceback.print_exc()
 
 
 @sio.on("pause")
@@ -2183,6 +2235,7 @@ def finish_match(r):
     """Kết thúc trận (kể cả khi luồng trận bị lỗi): đưa phòng về sảnh, loại người mất kết nối, báo client."""
     with LOCK:
         r.state = "lobby"; r.phase = "lobby"; r.flags = []; r.bullets = []; r.rockets = []; r.paused = False
+        r.auto_at = None; r.auto_block = time.time() + AUTO_AFTER_S
         # thống kê cả trận (gồm cả bot) gửi kèm thông báo kết thúc để hiện bảng tổng kết + chúc mừng
         stats = [[q.pid, q.nick, q.team, q.score, q.kills, q.deaths] for q in r.players.values()]
         for k, q in list(r.players.items()):  # hết trận: người còn đang mất kết nối thì bị loại khỏi phòng
@@ -2534,6 +2587,7 @@ def startup_worker():
     load_questions()
     sio.start_background_task(janitor)
     sio.start_background_task(mm_loop)
+    sio.start_background_task(auto_loop)
     print(f"[*] Phiên bản game: {VERSION_NAME} (version {VERSION}) - chỉ client cùng version được kết nối")
     print(f"[*] Bản đồ {TW}x{TH} ô, {HZ} lần/giây. CORS: {ORIGINS if ORIGINS == '*' else ', '.join(ORIGINS)}")
     print(f"[*] Mở http://{'127.0.0.1' if HOST in ('0.0.0.0', '::') else HOST}:{PORT}/")

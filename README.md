@@ -112,6 +112,7 @@ Chỉ số nằm ở bảng `CHARS` đầu `main.py` (máu cộng thêm, hệ s�
   - **Đổi chế độ 1v1 … 5v5** và số round, miễn là không đội nào đang đông hơn cỡ mới (nếu không sẽ báo lỗi và giữ nguyên).
   - **Giữ ghế chủ phòng:** chủ phòng đóng trang / rớt mạng ở phòng chờ vẫn được giữ ghế `HOST_KEEP_SECONDS` giây (mặc định 120). Mở lại game bằng đúng trình duyệt đó là nhận lại phòng; hết hạn thì quyền chủ phòng chuyển cho người kế tiếp.
   - **Nhường chủ phòng** (👑) và **Kick** (✖): người bị kick không vào lại được phòng đó bằng trình duyệt cũ. Kick giữa trận thì nhân vật do bot chơi tiếp.
+  - **Tự động bắt đầu:** khi cả hai đội đủ người (PvE: đội Xanh đủ) và không ai đang mất kết nối, phòng đếm ngược `AUTO_START_SECONDS` giây (mặc định 5) rồi vào trận; thiếu người lại thì huỷ đếm. Sau mỗi trận chờ thêm `AUTO_START_AFTER_SECONDS` giây (mặc định 20) để kịp xem kết quả. Chủ phòng vẫn bấm Bắt đầu thủ công được.
   - **Khóa phòng:** không ai vào được nữa (người đang giữ chỗ chờ vào lại vẫn vào được). Bật/tắt được cả khi đang chơi.
   - **Khóa đội:** người chơi thường không tự đổi đội được; chủ phòng vẫn tự đổi và chuyển người khác (⇄ / 🔵 / 🔴).
   - **Chia đội ngẫu nhiên:** khi bấm Bắt đầu, toàn bộ người chơi được xáo ngẫu nhiên vào hai đội (chênh tối đa 1 người), ví dụ 10 người thành 5v5. Không áp dụng cho PvE/EvE.
@@ -165,6 +166,8 @@ cp .env.example .env
 | `TLS_REFRESH_HOURS` | `12` | Tự tải lại chứng chỉ sau mỗi bấy nhiêu giờ (hữu ích khi cert gia hạn) |
 | `MAX_SPECTATORS` | `30` | Số khán giả tối đa mỗi phòng |
 | `REJOIN_SECONDS` | `90` | Giữ chỗ cho người mất kết nối giữa trận (giây), `0` = tắt |
+| `AUTO_START_SECONDS` | `5` | Đếm ngược trước khi tự bắt đầu khi phòng đủ đội |
+| `AUTO_START_AFTER_SECONDS` | `20` | Sau khi hết trận, chờ chừng này giây mới tự bắt đầu trận kế |
 | `HOST_KEEP_SECONDS` | `120` | Giữ ghế chủ phòng khi chủ phòng đóng trang ở phòng chờ (giây), `0` = tắt |
 | `READ_SECONDS` | `10` | Thời gian đọc đề |
 | `PLAY_SECONDS` | `170` | Thời gian tranh cờ |

@@ -167,6 +167,7 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
    <label class="ck"><input type="checkbox" id="clock"> 🚫 Khóa phòng (không ai vào được nữa)</label>
    <label class="ck" id="ctlockw"><input type="checkbox" id="ctlock"> 🔐 Khóa đội (người mới vào không đổi đội được)</label>
    <label class="ck" id="crndw"><input type="checkbox" id="crnd"> 🎲 Chia đội ngẫu nhiên khi bắt đầu</label>
+   <label class="ck" id="cautow"><input type="checkbox" id="cauto"> ⏱️ Tự động bắt đầu khi đủ đội (đếm ngược vài giây)</label>
    <label class="ck"><input type="checkbox" id="clate"> 🚪 Cho người mới vào chơi khi trận đã bắt đầu</label></div>
   <div class="row" style="margin-top:10px"><button class="btn" id="bs0">🔵 Đội Xanh</button><button class="btn" id="bs1">🔴 Đội Đỏ</button><button class="btn" id="bs2">👁 Khán giả</button><button class="btn pri" id="bstart">Bắt đầu</button><button class="btn dng" id="bleave">Rời phòng</button></div>
   <small id="rnote">Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Mỗi đội cần ít nhất 1 người.</small></div>
@@ -322,7 +323,7 @@ function start(V){
  sock.on('qs',d=>{$('#qidle').classList.add('hide');$('#qwait').classList.remove('hide');$('#qtxt').textContent=`Đang tìm trận ${d.size}v${d.size}... ${d.n}/${d.need}`});
  for(const t of [0,1,2])$('#bs'+t).onclick=()=>sock.emit('seat',t);
  const cfg=o=>sock.emit('cfg',o);$('#csize').onchange=e=>cfg({size:+e.target.value});$('#crounds').onchange=e=>cfg({rounds:+e.target.value});
- for(const [i,k] of [['clock','locked'],['ctlock','tlock'],['crnd','rnd'],['clate','late']])$('#'+i).onchange=e=>cfg({[k]:e.target.checked});
+ for(const [i,k] of [['clock','locked'],['ctlock','tlock'],['crnd','rnd'],['clate','late'],['cauto','auto']])$('#'+i).onchange=e=>cfg({[k]:e.target.checked});
  const rename=()=>{if(room&&room.state==='lobby'&&!inGame)sock.emit('rename',{nick:nick()})};$('#nick').addEventListener('change',rename);$('#brn').onclick=rename;
  $('#roomscr').addEventListener('click',e=>{const b=e.target.closest('button[data-a]');if(!b)return;const a=b.dataset.a,p=+b.dataset.p;
   if(a==='mv')sock.emit('mv',{pid:p,t:+b.dataset.t});else if(a==='cede'){if(confirm('Nhường chủ phòng cho người này?'))sock.emit('cede',{pid:p})}else if(a==='kick'){if(confirm('Mời người này ra khỏi phòng? Họ sẽ không vào lại được.'))sock.emit('kick',{pid:p})}});$('#bstart').onclick=()=>{fsEnter();sock.emit('start')};$('#bleave').onclick=()=>sock.emit('leave');
@@ -336,13 +337,13 @@ function plRow(p,t,r){const me=p.pid===pid;let h=`${me?'⭐ ':''}${esc(p.nick)}$
   if(!p.aw)c+=b('cede',null,'Nhường chủ phòng','👑');c+=b('kick',null,'Mời ra khỏi phòng','✖');h+=' '+c}
  return `<div class="pl${p.aw?' aw':''}">${h}</div>`}
 function drawRoom(){const r=room,host=r.host===pid,lob=r.state==='lobby';$('#bs0').classList.toggle('hide',!!r.eve);$('#bs1').classList.toggle('hide',!!(r.pve||r.eve));$('#t0h').textContent=r.eve?'🤖 Đội Xanh (máy)':'🔵 Đội Xanh';$('#t1h').textContent=(r.pve||r.eve)?'🤖 Đội Đỏ (máy)':'🔴 Đội Đỏ';
- $('#rnote').textContent=(r.eve?'Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Phòng EvE không cần người chơi: máy tự lập hai đội bot, mọi người đều là khán giả.':'Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Mỗi đội cần ít nhất 1 người.')+(r.rnd&&!r.pve&&!r.eve?' 🎲 Khi bắt đầu, mọi người được chia ngẫu nhiên vào hai đội.':'')+(r.tlock&&!r.pve&&!r.eve?' 🔐 Đội đã bị khóa: chỉ chủ phòng chuyển đội được.':'');
+ $('#rnote').textContent=(r.eve?'Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Phòng EvE không cần người chơi: máy tự lập hai đội bot, mọi người đều là khán giả.':'Chỉ chủ phòng bấm Bắt đầu và Tạm dừng được. Mỗi đội cần ít nhất 1 người.')+(r.rnd&&!r.pve&&!r.eve?' 🎲 Khi bắt đầu, mọi người được chia ngẫu nhiên vào hai đội.':'')+(r.tlock&&!r.pve&&!r.eve?' 🔐 Đội đã bị khóa: chỉ chủ phòng chuyển đội được.':'')+(r.auto&&r.ain>=0?` ⏱️ Đủ đội! Tự bắt đầu sau ${r.ain} giây...`:r.auto?' ⏱️ Phòng sẽ tự bắt đầu khi đủ đội.':'');
  $('#rt').textContent=(r.locked?'🚫 ':'')+(r.pw?'🔒 ':'')+r.name+'  #'+r.code;$('#rs').textContent=`${r.pve?'PvE (đấu với máy) · ':''}${r.eve?'EvE (máy đấu máy, demo) · ':''}Chế độ ${r.size}v${r.size} · ${r.rounds} round · mỗi round 3 phút${r.locked?' · phòng đã khóa':''}${r.late?' · cho vào giữa trận':''}`;
  for(const t of [0,1])$('#t'+t).innerHTML=r.teams[t].map(p=>plRow(p,t,r)).join('');
  $('#t2').innerHTML=(r.specs||[]).map(p=>plRow(p,2,r)).join('')||'<small>Chưa có ai</small>';
  const mine=(r.specs||[]).some(p=>p.pid===pid)?2:r.teams[0].some(p=>p.pid===pid)?0:1;for(const t of [0,1,2]){$('#bs'+t).classList.toggle('on',t===mine);$('#bs'+t).disabled=!!(r.tlock&&!host)}
- $('#csize').value=r.size;$('#crounds').value=r.rounds;for(const [i,k] of [['clock','locked'],['ctlock','tlock'],['crnd','rnd'],['clate','late']])$('#'+i).checked=!!r[k];
- for(const i of ['csize','crounds','ctlock','crnd'])$('#'+i).disabled=!host||!lob;for(const i of ['clock','clate'])$('#'+i).disabled=!host;
+ $('#csize').value=r.size;$('#crounds').value=r.rounds;for(const [i,k] of [['clock','locked'],['ctlock','tlock'],['crnd','rnd'],['clate','late'],['cauto','auto']])$('#'+i).checked=!!r[k];
+ for(const i of ['csize','crounds','ctlock','crnd'])$('#'+i).disabled=!host||!lob;for(const i of ['clock','clate','cauto'])$('#'+i).disabled=!host;$('#cautow').classList.toggle('hide',!!r.eve);
  $('#ctlockw').classList.toggle('hide',!!(r.pve||r.eve));$('#crndw').classList.toggle('hide',!!(r.pve||r.eve));$('#clate').closest('label').classList.toggle('hide',!!r.eve);
  $('#rcn').textContent=host?'(bạn là chủ phòng)':'(chỉ chủ phòng chỉnh được)';
  $('#bstart').classList.toggle('hide',!host)}
