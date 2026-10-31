@@ -39,6 +39,12 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 #q .o{display:flex;gap:6px;margin-top:3px}#q .o b{flex:none;width:22px;height:22px;border-radius:50%;color:#fff;text-align:center;line-height:22px;font-size:13px}
 #tb{position:absolute;left:max(8px,env(safe-area-inset-left));top:max(8px,env(safe-area-inset-top));display:flex;gap:6px;z-index:4}
 #tb .btn{width:40px;height:40px;padding:0;font-size:18px;display:grid;place-items:center}
+#tb #tbm{display:none}
+@media (orientation:landscape) and (max-height:500px){
+ #tb #tbm{display:grid}
+ #tb:not(.open)>.btn:not(#tbm){display:none}
+ #tb.open{display:grid;grid-template-columns:repeat(4,40px);gap:6px;padding:6px;margin:-6px 0 0 -6px;background:rgba(20,48,107,.6);border-radius:16px;align-content:start}
+}
 #mm{position:absolute;right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:min(150px,22vw);border:3px solid var(--ink);border-radius:10px;background:#000;opacity:.92;pointer-events:none}
 #ov,#pz{position:absolute;inset:0;background:rgba(20,48,107,.55);display:grid;place-items:center;padding:12px;z-index:5}#pz{z-index:6;text-align:center}
 #banner{position:absolute;left:0;right:0;top:34%;text-align:center;font-size:clamp(28px,7vw,64px);font-weight:900;color:#fff;-webkit-text-stroke:3px var(--ink);paint-order:stroke fill;pointer-events:none;opacity:0}
@@ -730,6 +736,16 @@ function tog(){const m=!q.classList.contains('min');pref=m;try{localStorage.setI
 b.onclick=tog;q.addEventListener('click',()=>{if(q.classList.contains('min'))tog()});
 addEventListener('keydown',e=>{if(e.code==='KeyH'&&inGame)tog()});
 window.qPhase=ph=>{if(ph===lastPh)return;lastPh=ph;if(ph==='read')setQ(false);else if(ph==='play')setQ(pref)};setQ(false)})();
+</script>
+<script>
+(function(){const tb=document.getElementById('tb');if(!tb)return;
+const m=document.createElement('button');m.className='btn';m.id='tbm';m.textContent='\u2630';m.title='Menu';
+tb.insertBefore(m,tb.firstChild);
+function set(o){tb.classList.toggle('open',o);m.textContent=o?'\u2039':'\u2630'}
+m.onclick=e=>{e.stopPropagation();set(!tb.classList.contains('open'))};
+tb.addEventListener('click',e=>{const x=e.target.closest('.btn');if(x&&x!==m)set(false)});
+document.addEventListener('pointerdown',e=>{if(tb.classList.contains('open')&&!tb.contains(e.target))set(false)},true);
+})();
 </script>
 <div id="spb" class="hide"></div>
 <script>
