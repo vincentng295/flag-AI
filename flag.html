@@ -3,7 +3,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="preload" as="image" href="/img/background.jpg">
+<link rel="preload" as="image" href="/img/background.png">
 <title>Cướp Cờ Đáp Án AI</title>
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
@@ -94,13 +94,24 @@ h1{margin:6px 0 10px;text-align:center;font-size:26px}h2{margin:0 0 8px;font-siz
 }
 @media (max-width:700px){.dock{grid-template-columns:1fr 1fr;gap:6px}}
 /* ===== Màn chắn: sảnh/phòng chỉ dùng khi ngang ===== */
-#gate{position:fixed;inset:0;z-index:90;display:none;place-items:center;padding:16px;background:#7ab356 url(/img/background.jpg) 30% 20%/cover no-repeat;touch-action:none}
+#boot{position:fixed;inset:0;z-index:95;display:grid;place-items:center;padding:16px;background:#7ab356 url(/img/background.png) 30% 20%/cover no-repeat;transition:opacity .45s;touch-action:none}#boot.out{opacity:0;pointer-events:none}
+#boot .card{max-width:340px;width:100%;text-align:center;margin:0;background:rgba(255,255,255,.93)}#boot h1{font-size:clamp(20px,4vw,26px);margin:0 0 4px}#boot .sp{width:38px;height:38px;margin:12px auto 8px;border:5px solid #cfe0ff;border-top-color:var(--ink);border-radius:50%;animation:bsp .8s linear infinite}@keyframes bsp{to{transform:rotate(360deg)}}
+#gate{position:fixed;inset:0;z-index:90;display:none;place-items:center;padding:16px;background:#7ab356 url(/img/background.png) 30% 20%/cover no-repeat;touch-action:none}
 #gate:before{content:"";position:absolute;inset:0;background:rgba(20,48,107,.55)}
 #gate .card{position:relative;max-width:360px;text-align:center;margin:0}
 #gate .ph{font-size:64px;display:inline-block;animation:gr 2.4s ease-in-out infinite}
 @keyframes gr{0%,25%{transform:rotate(0)}60%,100%{transform:rotate(-90deg)}}
 @media (orientation:portrait){body:not(.ing) #gate{display:grid}}
 </style></head><body>
+<div id="boot"><div class="card"><h1>🚩 Cướp Cờ Đáp Án AI</h1><small>Đấu trường học sinh</small><div class="sp"></div><small id="bootmsg">Đang tải trò chơi...</small></div></div>
+<script>
+/* Màn hình chờ khi mới vào trang: ẩn đi khi đã tải xong hình nền và kết nối máy chủ (tối đa 10 giây) */
+(function(){const el=document.getElementById('boot'),msg=document.getElementById('bootmsg'),t0=Date.now(),need={bg:0,net:0};let done=false;
+ function fin(){if(done)return;done=true;const w=Math.max(0,500-(Date.now()-t0));setTimeout(()=>{el.classList.add('out');setTimeout(()=>el.remove(),500)},w)}
+ window.bootMark=k=>{need[k]=1;if(need.bg&&need.net)fin();else msg.textContent=need.bg?'Đang kết nối máy chủ...':'Đang tải hình nền...'};
+ const im=new Image();im.onload=im.onerror=()=>bootMark('bg');im.src='/img/background.png';
+ setTimeout(fin,10000)})();
+</script>
 
 <div class="shell">
 <div id="lobby" class="scr bgs lob">
@@ -237,7 +248,7 @@ setMute(AU.mute);
 
 /* ================= KẾT NỐI ================= */
 function loadSock(){return new Promise((ok,no)=>{const add=u=>{const s=document.createElement('script');s.src=u;s.onload=ok;s.onerror=()=>u.startsWith('http')?no():add('https://cdn.socket.io/4.8.4/socket.io.min.js');document.head.appendChild(s)};add('socket_io_min.js')})}
-loadSock().then(init).catch(()=>toast('Không tải được Socket.IO'));
+loadSock().then(init).catch(()=>{bootMark('net');toast('Không tải được Socket.IO')});
 function leaveGameUI(){inGame=false;if(window.chToggle){chToggle(false);$('#chlog').innerHTML=''}window.endUp=false;S=null;musicStop();$('#ov').classList.add('hide');$('#pz').classList.add('hide')}
 let rjOn=false,rjT=null,rjIgnore=false;
 const clearLast=()=>{try{localStorage.removeItem('lastRoom')}catch(e){}};
@@ -249,8 +260,8 @@ function init(){fetch('version.json?'+Date.now(),{cache:'no-store'}).then(r=>r.j
 function start(V){
  const srv=new URLSearchParams(location.search).get('server'),opt={auth:{version:V.version,tok:getTok()}};opt.transports=['websocket','polling'];sock=srv?io(srv,opt):io(opt);
  $('#ver').textContent=V.versionName||'';
- sock.on('connect_error',e=>{const d=e&&e.data;if(d&&d.code==='version'){const b=$('#verr');b.innerHTML=`⚠️ Phiên bản không khớp: bạn đang dùng <b>${esc(V.versionName||'?')}</b>, máy chủ chạy <b>${esc(d.server)}</b>. Hãy tải lại trang (Ctrl+F5) để cập nhật.`;b.classList.remove('hide');sock.disconnect()}});
- sock.on('connect',()=>{$('#verr').classList.add('hide');sock.emit('char',{g:MYG});tryRejoin()});
+ sock.on('connect_error',e=>{bootMark('net');const d=e&&e.data;if(d&&d.code==='version'){const b=$('#verr');b.innerHTML=`⚠️ Phiên bản không khớp: bạn đang dùng <b>${esc(V.versionName||'?')}</b>, máy chủ chạy <b>${esc(d.server)}</b>. Hãy tải lại trang (Ctrl+F5) để cập nhật.`;b.classList.remove('hide');sock.disconnect()}});
+ sock.on('connect',()=>{bootMark('net');$('#verr').classList.add('hide');sock.emit('char',{g:MYG});tryRejoin()});
  sock.on('rejoined',rjDone);sock.on('rejoin_fail',m=>{rjDone();clearLast();toast(m)});
  sock.on('chat',chAdd);
  sock.on('auto',d=>{$('#autob').classList.toggle('hide',!d.on);if(d.on)toast('🤖 Bạn đứng yên quá lâu nên bot đang chơi thay. Hãy di chuyển hoặc bắn để điều khiển lại!')});
