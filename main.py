@@ -97,6 +97,30 @@ MM_WAIT_S = env_num("MATCH_FILL_SECONDS", 60)  # ghép trận tự động: ch�
 T = 32; TW, TH = 80, 56; W, H = TW * T, TH * T     # bản đồ 80x56 ô
 PR = 14; HZ = 20; DT = 1.0 / HZ
 SPEED, CARRY_K, RIVER_K = 200.0, 0.7, 0.75
+# Nhân vật động vật: (tên, máu cộng thêm, hệ số tốc độ, hệ số tốc độ khi lội sông).
+# PHẢI khớp bảng CH trong flag.html (client dùng để tự dự đoán di chuyển).
+CHARS = [
+    ("Cáo Lanh Lẹ", 0, 1.10, 0.75),
+    ("Gấu Thép", 2, 0.92, 0.75),
+    ("Thỏ Nhảy", 0, 1.04, 0.90),
+    ("Cú Thông Thái", 1, 1.00, 0.85),
+    ("Voi Khổng Lồ", 1, 0.96, 0.75),
+    ("Cánh Cụt Băng", 0, 1.00, 0.90),
+    ("Mèo Ninja", 0, 1.06, 0.75),
+    ("Hổ Dũng Mãnh", 1, 1.02, 0.75),
+    ("Ếch Phép Thuật", 0, 1.00, 1.00),
+    ("Đại Bàng Thiện Xạ", 0, 1.03, 0.85),
+]
+NCH = len(CHARS)
+SID_G = {}  # sid -> nhân vật đã chọn ở sảnh (gửi bằng sự kiện "char", có trước khi vào phòng)
+
+
+def clamp_g(v):
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return 0
+    return v if 0 <= v < NCH else 0
 LASER_RANGE = 480.0                      # tầm ngắm/bắn của thần giữ cờ
 GUARD_R, GUARD_SP = 22, 120.0            # bán kính, tốc độ thần giữ cờ (chậm hơn người chơi 200)
 BSPEED, COOL = 600.0, 0.32
@@ -147,7 +171,7 @@ LANES = [[(7, 49), (4, 42), (4, 5), (40, 4), (73, 7)], [(73, 7), (76, 14), (76, 
 LANES = [[(x * T, y * T) for x, y in l] for l in LANES]
 RIVER_K0, RIVER_HALF = 0.7, 3 * T
 FLAG_SETS = {2: [(33, 35), (47, 21)], 3: [(33, 35), (47, 21), (40, 28)], 4: [(33, 35), (47, 21), (24, 24), (56, 32)]}
-MAPINFO = {"W": W, "H": H, "aimLen": round(BSPEED * BLIFE + PR + 3),
+MAPINFO = {"chars": [list(c) for c in CHARS], "W": W, "H": H, "aimLen": round(BSPEED * BLIFE + PR + 3),
            "bSpeed": BSPEED, "bLife": BLIFE, "cool": COOL, "swCool": SWORD_COOL, "swT": SWORD_T, "walls": WALLS, "bushes": BUSHES, "bases": BASES, "baseR": BASE_R, "lanes": LANES,
            "river": {"k": RIVER_K0, "half": RIVER_HALF}}
 
@@ -245,7 +269,7 @@ class P:
         s.sid, s.nick, s.pid, s.team = sid, nick, pid, 0
         s.nopick = 0.0  # sau khi thả cờ, chưa nhặt lại được ngay
         s.ep = 0; s.tpos = 0.0  # ep: số lần máy chủ ép vị trí; tpos: lúc nhận vị trí client gần nhất
-        s.g = 0; s.w = 0  # g: 0 nam/1 nữ; w: 0 súng bóng nước/1 kiếm nhựa
+        s.g = clamp_g(SID_G.get(sid)); s.w = 0  # g: chỉ số nhân vật trong CHARS (0..9); w: 0 súng bóng nước/1 kiếm nhựa
         s.bot = False; s.ai = new_ai()
         s.auto = False; s.proxy = False  # auto: người thật đang AFK nên bot chơi thay tạm; proxy: bot thay người đã rời trận
         s.act = time.time(); s.cw = 0  # act: lần cuối người chơi thật sự thao tác; cw: vũ khí client báo lần trước
@@ -256,7 +280,7 @@ class P:
 
     def reset(s):
         s.x = s.y = 0.0; s.a = 0.0; s.down = 0.0; s.cool = 0.0
-        s.lv = 1; s.exp = 0; s.mhp = HP + s.up; s.hp = s.mhp; s.rk = 0
+        s.lv = 1; s.exp = 0; s.mhp = HP + s.up + CHARS[s.g][1]; s.hp = s.mhp; s.rk = 0
         s.sw = 0.0; s.dx = s.dy = 0.0; s.fire = False; s.fl = False; s.sh = False; s.carry = -1; s.prog = 0.0; s.pf = -1
         s.kbt = 0.0; s.kvx = s.kvy = 0.0  # kbt: thời gian còn bị bật lùi
         s.un = -1  # chỉ số lá cờ nhà đang nhổ (-1 = không nhổ)
@@ -365,12 +389,24 @@ def _connect(auth=None):
     emit("rooms", rooms_list())
 
 
+@sio.on("char")
+def _char(d):
+    """Chọn nhân vật ở sảnh. Chỉ áp dụng cho người đang ở sảnh phòng; đang trong trận thì chỉ ghi nhớ cho trận sau."""
+    g = clamp_g(d.get("g") if isinstance(d, dict) else None)
+    with LOCK:
+        SID_G[request.sid] = g
+        r = SID_ROOM.get(request.sid)
+        p = (r.players.get(request.sid) or r.specs.get(request.sid)) if r else None
+        if p and not p.bot and r.state == "lobby":
+            p.g = g
+
+
 @sio.on("disconnect")
 def _disc():
     with LOCK:
         sid = request.sid
         r = SID_ROOM.get(sid); p = r.players.get(sid) if r else None
-        TOK.pop(sid, None); CHAT_LAST.pop(sid, None)
+        TOK.pop(sid, None); CHAT_LAST.pop(sid, None); SID_G.pop(sid, None)
         if p and not p.bot and p.tok and r.state == "playing" and REJOIN_S > 0 and not r.dead:
             # đang giữa trận: giữ chỗ REJOIN_S giây để học sinh vào lại (nhân vật đứng yên)
             p.away = True; p.awayAt = time.time(); p.dx = p.dy = 0.0; p.fire = p.fl = p.sh = False
@@ -686,12 +722,10 @@ def on_inp(d):
                 set_auto(r, p, False)  # lấy lại quyền điều khiển từ bot
         p.cw = neww
         if p.auto:
-            p.g = 1 if d.get("g") == 1 else 0
             return  # bot đang chơi thay: bỏ qua input/vị trí client cho tới khi người chơi thao tác lại
         p.dx, p.dy, p.a, p.fire = dx, dy, a, bool(d.get("f"))
         if p.fire and r.phase == "play" and p.down <= 0:
             p.fl = True  # chốt cú bấm ngắn: nhấn+thả giữa 2 tick vẫn tính 1 phát (khớp với đạn client đã hiện)
-        p.g = 1 if d.get("g") == 1 else 0
         p.w = d.get("w") if d.get("w") in (1, 2) else 0
         p.sh = bool(d.get("sh")) and p.w == 1  # giữ khiên (chỉ khi cầm kiếm)
         # Client tự dự đoán vị trí (không giật khi ping cao); máy chủ chỉ kiểm tra có hợp lệ không
@@ -726,7 +760,7 @@ def add_bots(r):
 def new_bot(r, team, pool):
     p = P("bot%d" % r.nextpid, pool.pop() if pool else "Bot %d" % random.randint(10, 99), r.nextpid)
     r.nextpid += 1
-    p.bot = True; p.team = team; p.g = random.randint(0, 1); p.w = 0
+    p.bot = True; p.team = team; p.g = random.randint(0, NCH - 1); p.w = 0
     p.ai = {"stuck_t": 0.0, "lx": 0.0, "ly": 0.0, "det": 0.0, "dd": (0.0, 0.0)}
     r.players[p.sid] = p
 
@@ -1127,7 +1161,7 @@ def add_exp(r, p, v):
         return
     p.exp += v
     while p.lv < MAXLV and p.exp >= p.lv * 6:
-        p.exp -= p.lv * 6; p.lv += 1; p.mhp = HP + p.up + p.lv - 1; p.hp = p.mhp
+        p.exp -= p.lv * 6; p.lv += 1; p.mhp = HP + p.up + CHARS[p.g][1] + p.lv - 1; p.hp = p.mhp
         r.ev.append(["u", round(p.x), round(p.y), p.team])
     if p.lv >= MAXLV:
         p.exp = 0
@@ -1595,7 +1629,7 @@ def step(r, live):
             if p.auto:
                 p.ep += 1  # client luôn bám theo vị trí do máy chủ (bot) điều khiển
         if botted(p) or time.time() - p.tpos > 0.5:  # client không gửi vị trí (mất kết nối/đời cũ) thì máy chủ tự mô phỏng
-            sp = SPEED * (1 + 0.04 * (p.lv - 1)) * (CARRY_K if p.carry >= 0 else 1) * (RIVER_K if in_river(p.x, p.y) else 1) * (SHIELD_K if shielding(p) else 1)
+            sp = SPEED * CHARS[p.g][2] * (1 + 0.04 * (p.lv - 1)) * (CARRY_K if p.carry >= 0 else 1) * (CHARS[p.g][3] if in_river(p.x, p.y) else 1) * (SHIELD_K if shielding(p) else 1)
             nx = p.x + p.dx * sp * DT
             if not hit_wall(nx, p.y, PR): p.x = nx
             ny = p.y + p.dy * sp * DT

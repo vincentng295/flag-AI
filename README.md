@@ -1,6 +1,6 @@
 # 🚩 Cướp Cờ Đáp Án AI
 
-<img alt="banner" src="https://github.com/user-attachments/assets/1b1ce9cb-0317-492c-af5d-a41db91fcc45" />
+![FLAG-AI BACKGROUND](/img/background.png)
 
 Game chiến thuật đồng đội **1v1 → 5v5** chạy trên trình duyệt (điện thoại hoặc máy tính). Hai đội **Xanh** và **Đỏ** tranh nhau các lá cờ ghi đáp án A/B/C/D của một câu hỏi, rồi mang về căn cứ của mình để cắm. Hết giờ mới chấm: cờ nằm ở căn cứ đội nào thì đội đó được cộng hoặc trừ điểm.
 
@@ -17,11 +17,9 @@ Dùng để trình diễn game mà không cần người chơi. Khi tạo phòng
 
 ## Nhân vật và vũ khí
 
-<img alt="gameplay" src="https://github.com/user-attachments/assets/3ef96bb8-373c-461a-8b7b-d9de50b846fd" />
-
 | | |
 |---|---|
-| Nhân vật | 👦 Học sinh nam, 👧 Học sinh nữ (chọn ở sảnh) |
+| Nhân vật | 10 nhân vật động vật, chọn ở sảnh (xem bảng bên dưới) |
 | Áo | Đội Xanh áo xanh, đội Đỏ áo đỏ |
 | 🔫 Súng bong bóng nước | Bắn xa, đạn bay thẳng, 1 sát thương, hồi 0.32 giây. Có **tự ngắm**: đạn hút nhẹ về địch/quái gần tâm ngắm nhất, trong tầm và không bị tường chắn |
 | 🗡️ Kiếm nhựa trẻ em | Chém hình quạt tầm gần (58 px), **2 sát thương**, hồi 0.55 giây. Trúng thì **đẩy lùi** và làm địch choáng, ngắt hành động của họ |
@@ -31,6 +29,25 @@ Dùng để trình diễn game mà không cần người chơi. Khi tạo phòng
 Trúng 1 đòn súng mất 1 máu, trúng 1 nhát kiếm mất 2 máu (mặc định có 3 máu). Hết máu thì bị "đóng băng" 5 giây rồi hồi sinh ở căn cứ. Người đang vác cờ không bắn và không chém được.
 
 Tầm đạn bong bóng được chọn đúng bằng tầm laze của thần giữ cờ (480 px), nên không thể đứng ngoài tầm laze mà bắn trúng thần.
+
+## 10 nhân vật động vật (mới)
+
+Mỗi người chọn một nhân vật ở sảnh (bot chọn ngẫu nhiên). Nhân vật chốt khi bắt đầu trận, không đổi được giữa trận. Hiện mỗi nhân vật khác nhau ở **ngoại hình** và **nội tại về chỉ số**; tuyệt chiêu và combo sẽ bổ sung ở bản sau.
+
+| # | Nhân vật | Nội tại hiện có |
+|---|---|---|
+| 1 | 🦊 Cáo Lanh Lẹ | Chạy nhanh hơn 10% |
+| 2 | 🐻 Gấu Thép | +2 máu, đi chậm hơn 8% |
+| 3 | 🐰 Thỏ Nhảy | Chạy nhanh hơn 4%, qua sông chỉ chậm 10% |
+| 4 | 🦉 Cú Thông Thái | +1 máu, qua sông chỉ chậm 15% |
+| 5 | 🐘 Voi Khổng Lồ | +1 máu, đi chậm hơn 4% |
+| 6 | 🐧 Cánh Cụt Băng | Qua sông chỉ chậm 10% |
+| 7 | 🐱 Mèo Ninja | Chạy nhanh hơn 6% |
+| 8 | 🐯 Hổ Dũng Mãnh | +1 máu, chạy nhanh hơn 2% |
+| 9 | 🐸 Ếch Phép Thuật | Qua sông không bị chậm |
+| 10 | 🦅 Đại Bàng Thiện Xạ | Chạy nhanh hơn 3%, qua sông chỉ chậm 15% |
+
+Chỉ số nằm ở bảng `CHARS` đầu `main.py` (máu cộng thêm, hệ số tốc độ, hệ số tốc độ khi lội sông). Client có bảng `CHS` trong `flag.html` dùng để dự đoán di chuyển, **hai bảng phải giống nhau**.
 
 ## Quái vật, hiệp sĩ, EXP và cấp độ
 
