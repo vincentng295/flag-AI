@@ -314,6 +314,7 @@ class Room:
         s.pve = pve  # PvE: đội Đỏ (1) là bot do máy điều khiển
         s.eve = eve and not pve  # EvE (demo): cả hai đội đều là bot, mọi người trong phòng (kể cả chủ phòng) chỉ xem
         s.fill = False  # phòng ghép nhanh có lấp chỗ thiếu bằng bot (cả hai đội)
+        s.space = False; s.mets = []; s.mcd = 8.0  # map ngoài vũ trụ: mets = thiên thạch đang rơi (có vòng cảnh báo), mcd = hồi chiêu mưa thiên thạch tự nhiên
         s.night = False; s.zrush = ()  # map ban đêm (khó): có zombie; zrush = các đội đã cắm cờ làm zombie xông tới (để báo một lần)
         s.locked = False  # khóa phòng: không ai vào được nữa (người đang ở trong / đang chờ vào lại vẫn giữ chỗ)
         s.tlock = False  # khóa đội: người chơi thường không tự đổi đội được (chủ phòng vẫn đổi/chuyển được)
@@ -352,7 +353,7 @@ def info(r):
     return {"code": r.code, "name": r.name, "size": r.size, "rounds": r.rounds, "pw": bool(r.pw), "state": r.state,
             "pve": r.pve, "eve": r.eve, "max": cap(r), "n": sum(1 for q in r.players.values() if not q.bot), "ns": len(r.specs),
             "host": (r.players.get(r.host) or r.specs.get(r.host) or P(0, "", 0)).pid,
-            "night": r.night, "locked": r.locked, "tlock": r.tlock, "rnd": r.rnd, "late": r.late, "auto": r.auto,
+            "night": r.night, "space": r.space, "locked": r.locked, "tlock": r.tlock, "rnd": r.rnd, "late": r.late, "auto": r.auto,
             "ain": max(0, int(math.ceil(r.auto_at - time.time()))) if r.auto_at else -1,
             "teams": [[{"pid": p.pid, "nick": p.nick, "aw": int(p.away)} for p in r.players.values() if p.team == t and not p.bot] for t in (0, 1)],
             "specs": [{"pid": p.pid, "nick": p.nick, "aw": int(p.away)} for p in r.specs.values()]}
@@ -514,7 +515,7 @@ def late_join(r, sid, nick, slot):
 
 def rd_payload(r):
     return {"i": r.round, "n": r.rounds, "q": {"question": r.q["question"], "options": r.q["options"]},
-            "players": roster(r), "map": MAPINFO, "night": r.night, "up": list(r.up)}
+            "players": roster(r), "map": MAPINFO, "night": r.night, "space": r.space, "up": list(r.up)}
 
 
 @sio.on("join")
@@ -550,7 +551,7 @@ def on_join(d):
         emit("me", {"pid": p.pid}); push(r)
         if r.state == "playing" and r.q:
             emit("rd", {"i": r.round, "n": r.rounds, "q": {"question": r.q["question"], "options": r.q["options"]},
-                        "players": roster(r), "map": MAPINFO, "night": r.night})
+                        "players": roster(r), "map": MAPINFO, "night": r.night, "space": r.space})
 
 
 @sio.on("leave")
@@ -712,7 +713,7 @@ def on_cfg(d):
             r.auto = bool(d["auto"]) and not r.fill
             if not r.auto:
                 r.auto_at = None
-        if any(k in d for k in ("size", "rounds", "tlock", "rnd", "night")):
+        if any(k in d for k in ("size", "rounds", "tlock", "rnd", "night", "space")):
             if r.state != "lobby":
                 emit("err", "Bản đồ, số người mỗi đội, số round, khóa đội và chia đội ngẫu nhiên chỉ đổi được ở phòng chờ.")
             else:
@@ -720,6 +721,10 @@ def on_cfg(d):
                     r.tlock = bool(d["tlock"])
                 if "night" in d:
                     r.night = bool(d["night"])
+                if "space" in d:
+                    r.space = bool(d["space"])
+                if r.space:
+                    r.night = False  # hai map đặc biệt không đi cùng nhau
                 if "rnd" in d:
                     r.rnd = bool(d["rnd"]) and not (r.pve or r.eve)
                 if "rounds" in d:
@@ -1421,13 +1426,14 @@ def friendly(mo, team):
 
 
 def mon_pack(mo):
-    return [mo["id"], mo["t"], round(mo["x"]), round(mo["y"]), mo["hp"], round(mo["ch"], 2), round(mo["la"], 2), round(mo["fl"], 2), round(mo["L"]), mo.get("tm", -1)]
+    return [mo["id"], mo["t"], round(mo["x"]), round(mo["y"]), mo["hp"], round(mo["ch"], 2), round(mo["la"], 2), round(mo["fl"], 2), round(mo["L"]), mo.get("tm", -1), round(mo.get("wu", 0.0), 2), round(mo.get("da", 0.0), 2), round(mo.get("fx", 0.0), 2)]
 
 
 def make_mons(r):
     """Đầu mỗi round: 4 slime + 4 dơi đặt đối xứng hai đội, 1 golem ở giữa, mỗi lá cờ có 1 thần giữ cờ bắn laze,
     mỗi đội có 5 hiệp sĩ tuần tra quanh căn cứ (không hồi sinh)."""
     r.mons, r.orbs, r.kp = [], [], [0, 0]
+    r.mets, r.mcd = [], 8.0
     def free(x, y, rad):
         return not hit_wall(x, y, rad + 6) and all(math.hypot(x - b[0], y - b[1]) > 450 for b in BASES)
     def add(t, x, y):
@@ -1609,6 +1615,14 @@ def hit_mon(r, mo, team, by=None, dmg=1):
     if random.random() < c["heal"]:
         drop_orb(r, mo["x"], mo["y"], 1)
     r.ev.append(["d", round(mo["x"]), round(mo["y"]), team])
+    if r.space and mo["t"] == 0:  # Sên Axit chết nổ vũng axit: ai đứng sát (kể cả người hạ nó bằng kiếm) mất 1 máu
+        r.ev.append(["acid", round(mo["x"]), round(mo["y"]), 58])
+        for q in list(r.players.values()):
+            if q.team in (0, 1) and q.down <= 0 and math.hypot(q.x - mo["x"], q.y - mo["y"]) < 58 + PR:
+                q.hp -= dmg_calc(r, q, 1)
+                r.ev.append(["h", round(q.x), round(q.y), q.team])
+                if q.hp <= 0:
+                    defeat(r, q)
 
 
 LASER_CHARGE, LASER_CD, LASER_DMG = 0.9, 2.6, 2
@@ -1765,6 +1779,105 @@ def zombie_step(r, mo, c):
     return None, 300.0
 
 
+MET_R, MET_T, MET_DMG = 70.0, 1.3, 2   # thiên thạch: bán kính nổ / thời gian cảnh báo / sát thương (trúng cả hai đội)
+
+
+def add_meteor(r, x, y, rad=MET_R, t=MET_T):
+    r.mets.append({"x": x, "y": y, "r": rad, "t": t, "tt": t})
+
+
+def meteor_step(r):
+    """Map ngoài vũ trụ: cứ 6-10 giây một thiên thạch rơi gần một người chơi ngoài căn cứ (vòng đỏ báo trước 1.3s); trúng mất 2 máu, cả hai đội."""
+    r.mcd -= DT
+    if r.mcd <= 0:
+        r.mcd = random.uniform(6.0, 10.0)
+        cand = [p for p in r.players.values() if p.team in (0, 1) and p.down <= 0
+                and all(math.hypot(p.x - b[0], p.y - b[1]) > BASE_R + 60 for b in BASES)]
+        if cand:
+            p = random.choice(cand); a, d = random.uniform(0, 6.283), random.uniform(0, 90)
+            add_meteor(r, p.x + math.cos(a) * d, p.y + math.sin(a) * d)
+    keep = []
+    for m in r.mets:
+        m["t"] -= DT
+        if m["t"] > 0:
+            keep.append(m); continue
+        r.ev.append(["met", round(m["x"]), round(m["y"]), round(m["r"])])
+        for q in list(r.players.values()):
+            if q.team in (0, 1) and q.down <= 0 and math.hypot(q.x - m["x"], q.y - m["y"]) < m["r"] + PR:
+                q.hp -= dmg_calc(r, q, MET_DMG)
+                r.ev.append(["h", round(q.x), round(q.y), q.team])
+                if q.hp <= 0:
+                    defeat(r, q)
+    r.mets = keep
+
+
+def space_ability(r, mo, c):
+    """Quái ngoài hành tinh (map vũ trụ). Trả về True nếu tick này quái đang gồng/lao (bỏ qua đuổi + đánh thường).
+    - slime -> Sên Axit: phun cục axit (1 sát thương, làm chậm 2s) từ xa; chết thì nổ axit.
+    - dơi -> Đĩa bay: gồng 0.5s (vạch đỏ báo hướng) rồi lao thẳng rất nhanh 0.4s, trúng mất 1 máu.
+    - golem -> Quái Sao Chổi: cứ 7s gọi thiên thạch rơi xuống tối đa 3 người ở gần (nhắm trước hướng đang chạy)."""
+    t = mo["t"]
+    mo["gcd"] -= DT
+    mo["fx"] = max(0.0, mo.get("fx", 0.0) - DT)
+    ps = [p for p in r.players.values() if p.team in (0, 1) and p.down <= 0]
+
+    def nearest(R, los=False):
+        best, bd = None, R
+        for p in ps:
+            d = math.hypot(p.x - mo["x"], p.y - mo["y"])
+            if d < bd and (not los or clear_shot(mo["x"], mo["y"], p.x, p.y)):
+                best, bd = p, d
+        return best
+    if t == 1:
+        if mo.get("wu", 0.0) > 0:
+            mo["wu"] -= DT
+            if mo["wu"] <= 0:
+                mo["wu"] = 0.0; mo["ds"] = 0.4; mo["dh"] = False
+            return True
+        if mo.get("ds", 0.0) > 0:
+            sp = c["sp"] * 3.4 * DT; a = mo["da"]
+            nx = mo["x"] + math.cos(a) * sp
+            if not hit_wall(nx, mo["y"], mo["r"]): mo["x"] = nx
+            ny = mo["y"] + math.sin(a) * sp
+            if not hit_wall(mo["x"], ny, mo["r"]): mo["y"] = ny
+            if not mo.get("dh"):
+                for p in ps:
+                    if math.hypot(p.x - mo["x"], p.y - mo["y"]) < PR + mo["r"] + 4:
+                        mo["dh"] = True
+                        if blocked(r, p, mo["x"], mo["y"], 1):
+                            continue
+                        p.hp -= dmg_calc(r, p, 1)
+                        r.ev.append(["h", round(p.x), round(p.y), p.team])
+                        if p.hp <= 0:
+                            defeat(r, p)
+            mo["ds"] -= DT
+            if mo["ds"] <= 0:
+                mo["ds"] = 0.0; mo["gcd"] = 4.0
+            return True
+        if mo["gcd"] <= 0:
+            tg = nearest(300.0, True)
+            if tg:
+                mo["wu"] = 0.5; mo["da"] = math.atan2(tg.y - mo["y"], tg.x - mo["x"])
+                return True
+    elif t == 0:
+        if mo["gcd"] <= 0:
+            tg = nearest(260.0, True)
+            if tg:
+                a = math.atan2(tg.y - mo["y"], tg.x - mo["x"])
+                r.bullets.append({"x": mo["x"] + math.cos(a) * (mo["r"] + 4), "y": mo["y"] + math.sin(a) * (mo["r"] + 4),
+                                  "vx": math.cos(a) * 320, "vy": math.sin(a) * 320, "t": -1, "life": 1.0, "o": MON_OWNER,
+                                  "dmg": 1, "mon": True, "slow": True})
+                mo["gcd"] = 2.6; mo["fx"] = 0.3
+    elif t == 2:
+        if mo["gcd"] <= 0:
+            tg = sorted((p for p in ps if math.hypot(p.x - mo["x"], p.y - mo["y"]) < 520), key=lambda p: math.hypot(p.x - mo["x"], p.y - mo["y"]))[:3]
+            if tg:
+                for p in tg:
+                    add_meteor(r, p.x + p.dx * 70, p.y + p.dy * 70)
+                mo["gcd"] = 7.0; mo["fx"] = 0.6
+    return False
+
+
 def mon_step(r):
     if r.night:  # có đội vừa cắm cờ: báo cho mọi người biết zombie đang xông về nhà đội đó
         rush = tuple(t for t in (0, 1) if any(f["planted"] == t for f in r.flags))
@@ -1799,6 +1912,8 @@ def mon_step(r):
         elif mo["t"] == 5:
             tg, bd = zombie_step(r, mo, c)
         else:
+            if r.space and space_ability(r, mo, c):
+                continue
             tg, bd = None, 300.0
             for p in r.players.values():
                 d = math.hypot(p.x - mo["x"], p.y - mo["y"])
@@ -2409,6 +2524,8 @@ def step(r, live):
             if blocked(r, hit, b["x"], b["y"], b.get("dmg", 1)):
                 continue  # khiên chặn: đạn biến mất
             hit.hp -= dmg_calc(r, hit, b.get("dmg", 1), b.get("o"))
+            if b.get("slow"):
+                slow(hit, 2.0, 0.6)  # axit dính người: chậm 40% trong 2 giây
             r.ev.append(["h", round(hit.x), round(hit.y), hit.team])
             if hit.hp <= 0:
                 defeat(r, hit, None if b.get("mon") else b["o"])
@@ -2418,6 +2535,8 @@ def step(r, live):
     if live:
         rocket_step(r); pickup_step(r)
         mon_step(r); orb_step(r)
+        if r.space:
+            meteor_step(r)
 
 
 def rocket_explode(r, rk):
@@ -2522,7 +2641,7 @@ def send_state(r):
               "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk, 1 if p.dsh > 0 else (2 if p.lkt > 0 else 0), round(speed_mult(p), 2), round(max(p.ut, 0.0), 1), int(p.rage), round(p.ca, 2) if p.ch > 0 else 9, round(p.ux), round(p.uy), round(p.shp, 1)] for p in vis],
               "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] if (not f["c"] or f["c"].pid in ids)
                     else [-1, -1, f["c"].pid, -1] for f in r.flags],
-              "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp, "un": r.unp, "um": UNPLANT_MAX,
+              "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp, "un": r.unp, "um": UNPLANT_MAX, "mt": [[round(m["x"]), round(m["y"]), round(m["r"]), round(m["t"], 2), m["tt"]] for m in r.mets],
               "rk": [[round(k["x"]), round(k["y"]), round(k["a"], 2), k["t"], k["o"].pid] for k in r.rockets],
               "hr": [[round(h["x"]), round(h["y"]), int(h["t"] <= 0)] for h in r.hearts],
               "rp": [[round(k["x"]), round(k["y"]), int(k["t"] <= 0)] for k in r.rkp],
@@ -2536,7 +2655,7 @@ def send_state(r):
         full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1,
                 "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk, 1 if p.dsh > 0 else (2 if p.lkt > 0 else 0), round(speed_mult(p), 2), round(max(p.ut, 0.0), 1), int(p.rage), round(p.ca, 2) if p.ch > 0 else 9, round(p.ux), round(p.uy), round(p.shp, 1)] for p in everyone],
                 "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] for f in r.flags],
-                "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp, "un": r.unp, "um": UNPLANT_MAX,
+                "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp, "un": r.unp, "um": UNPLANT_MAX, "mt": [[round(m["x"]), round(m["y"]), round(m["r"]), round(m["t"], 2), m["tt"]] for m in r.mets],
               "rk": [[round(k["x"]), round(k["y"]), round(k["a"], 2), k["t"], k["o"].pid] for k in r.rockets],
               "hr": [[round(h["x"]), round(h["y"]), int(h["t"] <= 0)] for h in r.hearts],
               "rp": [[round(k["x"]), round(k["y"]), int(k["t"] <= 0)] for k in r.rkp],
@@ -2609,7 +2728,7 @@ def play_round(r, i):
             p.reset(); spawn(r, p)
         make_mons(r)
         sio.emit("rd", {"i": i, "n": r.rounds, "q": {"question": q["question"], "options": q["options"]},
-                        "players": roster(r), "map": MAPINFO, "night": r.night, "up": list(r.up)}, to=r.code)
+                        "players": roster(r), "map": MAPINFO, "night": r.night, "space": r.space, "up": list(r.up)}, to=r.code)
     if not wait(r, READ_S, False, "read"):
         return False
     if not wait(r, PLAY_S, True, "play"):

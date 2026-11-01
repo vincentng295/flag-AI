@@ -72,6 +72,20 @@ Mỗi người có **thanh Nộ 0-100**, reset mỗi round. Đầy nộ thì b�
 
 Hằng số cân bằng nằm ở đầu `main.py` (`RAGE_*`, `ULT_ATK`, `HOP_*`, `SHOCK_R`, `SNOW_R`, `ROAR_R`, `FROG_L`, `EAGLE_*`); hiệu lực từng chiêu nằm trong `use_ult()`. Nhớ chạy lại máy chủ và dùng `version.json` mới (v3.6) để các tab cũ tải lại.
 
+## Map ngoài vũ trụ (mới)
+
+Chọn **🌌 Ngoài vũ trụ** trong ô Bản đồ ở phòng chờ (không đi chung với map ban đêm). Địa hình giữ nguyên để cân bằng: sông thành dải plasma tím (vẫn làm chậm), đá thành thiên thạch, bụi cỏ thành tinh vân tím (vẫn núp được), không có zombie. Thần giữ cờ và hiệp sĩ vẫn như cũ; slime, dơi và golem được thay bằng quái ngoài hành tinh có đòn đánh riêng:
+
+| Quái | Thay cho | Cách tấn công |
+|---|---|---|
+| 🐌 **Sên Axit** (động vật hành tinh) | Slime | Đứng xa phun cục axit (tầm ~260 px): 1 sát thương và **làm chậm 40% trong 2s**. Chết thì **nổ vũng axit** bán kính ~58 px, ai đứng sát mất 1 máu (nên hạ từ xa) |
+| 🛸 **Đĩa bay Alien** | Dơi | Thấy người trong 300 px thì **gồng 0.5s** (vạch đỏ báo hướng) rồi **lao thẳng rất nhanh 0.4s**, trúng mất 1 máu (khiên chặn được). Nghỉ 4s rồi lao tiếp |
+| ☄️ **Quái Sao Chổi** | Golem giữa map | Cứ 7s **gọi thiên thạch** rơi xuống tối đa 3 người ở gần, nhắm trước hướng đang chạy. Vẫn đánh cận chiến như golem |
+
+**Mưa thiên thạch:** cứ 6-10 giây có một thiên thạch rơi gần một người chơi đang ở ngoài căn cứ. Vòng đỏ cảnh báo 1.3 giây, trúng mất 2 máu, **cả hai đội đều dính** (khiên không chặn được vì đòn rơi từ trên xuống). Căn cứ không bị thiên thạch tự nhiên rơi vào.
+
+Hằng số ở `main.py`: `MET_R`, `MET_T`, `MET_DMG` (thiên thạch); chiêu từng quái nằm trong `space_ability()`.
+
 ## Quái vật, hiệp sĩ, EXP và cấp độ
 
 <img alt="fullmap_gameplay" src="https://github.com/user-attachments/assets/c81472c6-77d6-4950-bac3-c29553e50e7d" />
