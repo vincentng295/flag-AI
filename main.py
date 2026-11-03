@@ -93,6 +93,7 @@ MAXLV = 5
 REJOIN_S = env_num("REJOIN_SECONDS", 90)  # giữ chỗ cho người chơi mất kết nối giữa trận (giây); 0 = tắt
 AFK_S = env_num("AFK_SECONDS", 60)  # đứng yên, không bấm gì quá chừng này giây giữa round thì bot chơi thay tạm thời (bấm lại là lấy lại quyền); 0 = tắt
 MAX_SPECS = env_num("MAX_SPECTATORS", 30)
+ROAM_SPEED = env_num("ROAM_SPEED", 220)  # khán giả "đi dạo" giữa trận (nhân vật thầy Hakuma): tốc độ đi (px/giây); 0 = tắt chế độ này
 ZOMBIE_N = max(0, env_num("ZOMBIE_COUNT", 16))  # map ban đêm: số zombie rải trên bản đồ (chia đều hai nửa đối xứng)
 AUTO_START_S = env_num("AUTO_START_SECONDS", 5)  # đếm ngược trước khi tự bắt đầu khi phòng đủ đội (giây)
 AUTO_AFTER_S = env_num("AUTO_START_AFTER_SECONDS", 20)  # sau khi hết một trận, chờ chừng này giây mới tự bắt đầu trận kế (để kịp xem kết quả)
@@ -189,7 +190,7 @@ RIVER_K0, RIVER_HALF = 0.7, 3 * T
 FLAG_SETS = {2: [(33, 35), (47, 21)], 3: [(33, 35), (47, 21), (40, 28)], 4: [(33, 35), (47, 21), (24, 24), (56, 32)]}
 MAPINFO = {"chars": [list(c) for c in CHARS], "W": W, "H": H, "aimLen": round(BSPEED * BLIFE + PR + 3),
            "bSpeed": BSPEED, "bLife": BLIFE, "cool": COOL, "swCool": SWORD_COOL, "swT": SWORD_T, "walls": WALLS, "bushes": BUSHES, "bases": BASES, "baseR": BASE_R, "lanes": LANES,
-           "river": {"k": RIVER_K0, "half": RIVER_HALF}}
+           "river": {"k": RIVER_K0, "half": RIVER_HALF}, "roamV": ROAM_SPEED}
 
 app = Flask(__name__)
 sio = SocketIO(app, async_mode="threading", cors_allowed_origins=ORIGINS)
@@ -292,6 +293,7 @@ class P:
         s.up = 0; s.rk = 0  # up: cấp nâng cấp của đội (đặt đầu mỗi round); rk: số đạn tên lửa đang có
         s.score = s.kills = s.deaths = 0  # thống kê cả trận: điểm cá nhân (hạ người/quái), số lần hạ, số lần bị hạ
         s.tok = ""; s.away = False; s.awayAt = 0.0  # tok: token trình duyệt; away: đang mất kết nối, chờ vào lại
+        s.roam = False  # khán giả đang đi dạo trên bản đồ (nhân vật thầy Hakuma, vị trí ở x, y); không phải người chơi nên không ai đánh trúng được
         s.reset()
 
     def reset(s):
@@ -1010,6 +1012,63 @@ def on_ult(d=None):
     if p.auto:
         set_auto(r, p, False)  # bấm chiêu = lấy lại quyền từ bot
     p.ur = True
+
+
+def roam_spot(r, fpid=0):
+    """Chỗ đặt thầy Hakuma khi khán giả bắt đầu đi dạo: cạnh người đang theo dõi, không có thì giữa bản đồ (lấy ô trống gần nhất)."""
+    cx, cy = W / 2, H / 2
+    t = next((q for q in r.players.values() if q.pid == fpid), None) if fpid else None
+    if t:
+        cx, cy = t.x, t.y
+    for rad in range(0, 400, 24):
+        for k in range(12 if rad else 1):
+            ang = k * math.pi / 6
+            x, y = cx + math.cos(ang) * rad, cy + math.sin(ang) * rad
+            if not hit_wall(x, y, PR + 2):
+                return x, y
+    return float(BASES[0][0]), float(BASES[0][1])
+
+
+@sio.on("roam")
+def on_roam(d=None):
+    """Khán giả bật/tắt chế độ đi dạo: thầy Hakuma đi quanh bản đồ, chỉ di chuyển - không bắn/chém, không bị đánh trúng, không nhặt cờ hay đồ."""
+    sid = request.sid
+    with LOCK:
+        r = SID_ROOM.get(sid)
+        p = r.specs.get(sid) if r else None
+        if not p:
+            return
+        d = d if isinstance(d, dict) else {}
+        if not d.get("on"):
+            p.roam = False
+            return emit("roamed", {"on": False})
+        if ROAM_SPEED <= 0:
+            return emit("err", "Chế độ đi dạo đang bị tắt.")
+        if r.state != "playing" or r.dead or r.abort:
+            return emit("err", "Chỉ đi dạo được khi trận đang diễn ra.")
+        f = d.get("f")
+        p.roam = True
+        p.x, p.y = roam_spot(r, f if isinstance(f, int) else 0)
+        p.tpos = time.time()
+        emit("roamed", {"on": True, "x": round(p.x, 1), "y": round(p.y, 1)})
+
+
+@sio.on("rinp")
+def on_rinp(d):
+    """Vị trí thầy Hakuma của khán giả (client tự dự đoán như người chơi; máy chủ chỉ kiểm tra tốc độ và tường)."""
+    r = SID_ROOM.get(request.sid)
+    p = r.specs.get(request.sid) if r else None
+    if not p or not p.roam or r.state != "playing" or r.paused or r.dead or r.abort:
+        return
+    try:
+        nx, ny, now = float(d["x"]), float(d["y"]), time.time()
+        dt = min(max(now - p.tpos, 0.05), 2.0) if p.tpos else 0.15
+        if math.hypot(nx - p.x, ny - p.y) <= ROAM_SPEED * 1.3 * dt + 12 and not hit_wall(nx, ny, PR - 1):
+            p.x, p.y, p.tpos = nx, ny, now
+        else:
+            emit("rfix", {"x": round(p.x, 1), "y": round(p.y, 1)})  # quá nhanh hoặc xuyên tường: kéo client về vị trí máy chủ
+    except Exception:
+        pass
 
 
 @sio.on("inp")
@@ -2629,6 +2688,7 @@ def seen_by(p, t, seers, owl):
 def send_state(r):
     """Mỗi đội nhận một bản trạng thái riêng: địch đứng trong bụi cỏ (không có đồng đội ở gần) sẽ bị ẩn."""
     evs, r.ev = r.ev, []
+    sx = [[p.pid, round(p.x), round(p.y)] for p in list(r.specs.values()) if p.roam and not p.away]  # khán giả đang đi dạo (ai cũng thấy)
     for t in (0, 1):
         team = [p for p in list(r.players.values()) if p.team == t and not p.bot and not p.away]
         if not team:
@@ -2637,7 +2697,7 @@ def send_state(r):
         owl = owl_on(r, t)
         vis = [p for p in list(r.players.values()) if seen_by(p, t, seers, owl)]
         ids = {p.pid for p in vis}
-        st = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused,
+        st = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sx": sx,
               "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk, 1 if p.dsh > 0 else (2 if p.lkt > 0 else 0), round(speed_mult(p), 2), round(max(p.ut, 0.0), 1), int(p.rage), round(p.ca, 2) if p.ch > 0 else 9, round(p.ux), round(p.uy), round(p.shp, 1)] for p in vis],
               "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] if (not f["c"] or f["c"].pid in ids)
                     else [-1, -1, f["c"].pid, -1] for f in r.flags],
@@ -2652,7 +2712,7 @@ def send_state(r):
             _emit_safe("st", st, p.sid)
     if r.specs:
         everyone = list(r.players.values())
-        full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1,
+        full = {"ph": r.phase, "tl": round(r.tl, 1), "i": r.round, "tot": r.total, "pz": r.paused, "sp": 1, "sx": sx,
                 "p": [[p.pid, p.team, round(p.x), round(p.y), round(p.a, 2), p.hp, round(p.down, 1), p.carry, round(p.prog, 2), p.g, p.w, round(max(p.sw, 0) / SWORD_T, 2), p.ep, p.lv, p.exp, p.mhp, int(shielding(p)), int(p.kbt > 0), p.up, p.rk, 1 if p.dsh > 0 else (2 if p.lkt > 0 else 0), round(speed_mult(p), 2), round(max(p.ut, 0.0), 1), int(p.rage), round(p.ca, 2) if p.ch > 0 else 9, round(p.ux), round(p.uy), round(p.shp, 1)] for p in everyone],
                 "f": [[round(f["x"]), round(f["y"]), f["c"].pid if f["c"] else 0, f["planted"]] for f in r.flags],
                 "b": [[round(b["x"]), round(b["y"]), b["t"], b["o"].pid, b.get("dmg", 1)] for b in r.bullets], "ev": evs, "kp": r.kp, "un": r.unp, "um": UNPLANT_MAX, "mt": [[round(m["x"]), round(m["y"]), round(m["r"]), round(m["t"], 2), m["tt"]] for m in r.mets],
@@ -2756,6 +2816,9 @@ def finish_match(r):
     with LOCK:
         r.state = "lobby"; r.phase = "lobby"; r.flags = []; r.bullets = []; r.rockets = []; r.paused = False
         r.auto_at = None; r.auto_block = time.time() + AUTO_AFTER_S
+        for q in list(r.specs.values()):  # hết trận: khán giả đang đi dạo trở lại chế độ xem
+            if q.roam:
+                q.roam = False; _emit_safe("roamed", {"on": False}, q.sid)
         # thống kê cả trận (gồm cả bot) gửi kèm thông báo kết thúc để hiện bảng tổng kết + chúc mừng
         stats = [[q.pid, q.nick, q.team, q.score, q.kills, q.deaths] for q in r.players.values()]
         for k, q in list(r.players.items()):  # hết trận: người còn đang mất kết nối thì bị loại khỏi phòng

@@ -15,6 +15,16 @@ Dùng để trình diễn game mà không cần người chơi. Khi tạo phòng
 - Hai đội bot đều **biết đáp án** như bot của PvE, nên trận nào cũng là cuộc đua cướp cờ đúng giữa hai đội máy. Khán giả xem toàn bản đồ hoặc bấm tên một bot để theo sát (phím `←/→`, `V` về toàn map).
 - Hết trận phòng về sảnh, chủ phòng bấm Bắt đầu để chạy trận demo mới. Khi người xem cuối cùng rời đi thì phòng tự đóng.
 
+## Khán giả đi dạo trong trận (mới)
+
+Khán giả có thể bước xuống bản đồ bằng **nhân vật thầy Hakuma** 🐺 để đi vòng quanh xem trận ngay trên sân:
+
+- **Bật/tắt:** nút **🐺 Đi dạo (thầy Hakuma)** trên thanh khán giả, hoặc phím `E`. Chỉ dùng được khi trận đang diễn ra; hết trận tự trở lại chế độ xem. Bấm tên một người chơi hoặc `E` lần nữa để thoát đi dạo.
+- **Điều khiển:** `WASD`/mũi tên trên máy tính, hoặc vuốt nửa trái màn hình trên điện thoại/iPad. Camera đi theo thầy, bản đồ ban đêm có vòng sáng quanh thầy.
+- **Chỉ di chuyển, không đấu được:** không bắn/chém, không dùng khiên hay nộ, không nhặt cờ/tim/súng tên lửa, đạn - tên lửa - quái - thiên thạch đều xuyên qua, không ai làm thầy bị thương. Thầy vẫn bị tường chặn như người chơi.
+- Mọi người trong phòng (cả người chơi lẫn khán giả khác) đều thấy thầy đi dạo kèm tên khán giả (👁) và một chấm tím trên bản đồ nhỏ; thầy được vẽ dưới nhân vật người chơi nên không che tầm nhìn.
+- Thầy Hakuma được vẽ trực tiếp bằng code cùng kiểu với 10 nhân vật động vật (sói xám, kính tròn gọng vàng, áo haori trắng viền vàng, cầm phấn và cuốn sổ), không dùng file ảnh. Máy chủ chỉ kiểm tra tốc độ và tường, nên khán giả không thể chạy nhanh hay xuyên tường.
+
 ## Nhân vật và vũ khí
 
 | | |
@@ -204,6 +214,7 @@ cp .env.example .env
 | `TLS_PORT` | `443` | Cổng HTTPS |
 | `TLS_REFRESH_HOURS` | `12` | Tự tải lại chứng chỉ sau mỗi bấy nhiêu giờ (hữu ích khi cert gia hạn) |
 | `MAX_SPECTATORS` | `30` | Số khán giả tối đa mỗi phòng |
+| `ROAM_SPEED` | `220` | Tốc độ đi của khán giả ở chế độ đi dạo (px/giây); `0` = tắt chế độ đi dạo |
 | `REJOIN_SECONDS` | `90` | Giữ chỗ cho người mất kết nối giữa trận (giây), `0` = tắt |
 | `AUTO_START_SECONDS` | `5` | Đếm ngược trước khi tự bắt đầu khi phòng đủ đội |
 | `AUTO_START_AFTER_SECONDS` | `20` | Sau khi hết trận, chờ chừng này giây mới tự bắt đầu trận kế |
